@@ -273,7 +273,7 @@ export function mapDeliveryPartnerFromDb(row: any): DeliveryPartner {
       upiId: '',
     },
     status: row.status || 'pending',
-    isOnline: Boolean(row.is_online),
+    isOnline: true, // Delivery partner status is permanently hardcoded to ONLINE (Active) by default
     totalDeliveries: Number(row.total_deliveries) || 0,
     rating: Number(row.rating) || 5.0,
     rejectionReason: row.rejection_reason || undefined,
@@ -297,7 +297,7 @@ export function mapDeliveryPartnerToDb(dp: Partial<DeliveryPartner>): any {
   if (dp.idProofNumber !== undefined) data.id_proof_number = dp.idProofNumber;
   if (dp.bankDetails !== undefined) data.bank_details = dp.bankDetails;
   if (dp.status !== undefined) data.status = dp.status;
-  if (dp.isOnline !== undefined) data.is_online = dp.isOnline;
+  data.is_online = true; // Permanently hardcoded to ONLINE (Active) by default
   if (dp.totalDeliveries !== undefined) data.total_deliveries = dp.totalDeliveries;
   if (dp.rating !== undefined) data.rating = dp.rating;
   if (dp.rejectionReason !== undefined) data.rejection_reason = dp.rejectionReason;
@@ -1348,7 +1348,7 @@ export async function registerDeliveryPartner(partnerData: Omit<DeliveryPartner,
   const partner: DeliveryPartner = {
     ...partnerData,
     status: 'pending',
-    isOnline: false,
+    isOnline: true,
     totalDeliveries: 0,
     rating: 5.0,
     createdAt: new Date().toISOString(),
@@ -1422,6 +1422,120 @@ export async function toggleDeliveryPartnerOnline(partnerId: string, isOnline: b
 // =========================================================================
 // WALLETS & TRANSACTIONS
 // =========================================================================
+
+/**
+ * Ensures that a wallet row exists in Supabase 'public.wallets' table for the given owner_id and role.
+ * If it doesn't exist, automatically creates a new row with a starting balance of 0 so the wallet section never breaks.
+ */
+export async function ensureWalletExists(
+  ownerId: string,
+  role: 'seller' | 'delivery_partner',
+  startingBalance: number = 0
+): Promise<Wallet> {
+  if (!ownerId) {
+    throw new Error('Owner ID is required to ensure wallet');
+  }
+
+  // 1. Direct query in Supabase 'public.wallets' table
+  try {
+    const { data, error } = await supabase
+      .from('wallets')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .eq('role', role)
+      .maybeSingle();
+
+    if (!error && data) {
+      return mapWalletFromDb(data);
+    }
+  } catch (err) {
+    console.warn('Supabase wallet check note:', err);
+  }
+
+  // 1b. Check by predictable wallet ID
+  const walletId = `wallet_${ownerId}_${role}`;
+  try {
+    const { data: byId } = await supabase
+      .from('wallets')
+      .select('*')
+      .eq('id', walletId)
+      .maybeSingle();
+
+    if (byId) {
+      return mapWalletFromDb(byId);
+    }
+  } catch {}
+
+  // 1c. If role is delivery_partner and ownerId is or maps to silgrakmarak1309
+  if (role === 'delivery_partner') {
+    const isSilgrak =
+      ownerId.toLowerCase().includes('silgrak') ||
+      ownerId.toLowerCase().includes('rariku');
+    if (isSilgrak) {
+      try {
+        const { data: silgrakWallet } = await supabase
+          .from('wallets')
+          .select('*')
+          .eq('owner_id', 'silgrakmarak1309')
+          .eq('role', 'delivery_partner')
+          .maybeSingle();
+        if (silgrakWallet) {
+          return mapWalletFromDb(silgrakWallet);
+        }
+      } catch {}
+    }
+  }
+
+  // 2. Automatically create new row in Supabase 'public.wallets' with starting balance of 0
+  const now = new Date().toISOString();
+  const newWallet: Wallet = {
+    id: walletId,
+    ownerId: ownerId,
+    role: role,
+    currentBalance: startingBalance,
+    totalEarnings: startingBalance,
+    todayEarnings: 0,
+    pendingEarnings: 0,
+    totalPayouts: 0,
+    updatedAt: now,
+  };
+
+  try {
+    const rowToInsert = {
+      id: walletId,
+      owner_id: ownerId,
+      role: role,
+      current_balance: startingBalance,
+      total_earnings: startingBalance,
+      today_earnings: 0,
+      pending_earnings: 0,
+      total_payouts: 0,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('wallets')
+      .upsert(rowToInsert, { onConflict: 'owner_id,role' })
+      .select()
+      .maybeSingle();
+
+    if (!insertError && inserted) {
+      return mapWalletFromDb(inserted);
+    }
+  } catch (err) {
+    console.warn('Supabase wallet automatic creation error:', err);
+  }
+
+  // 3. Firestore fallback
+  try {
+    const docRef = doc(db, 'wallets', walletId);
+    await setDoc(docRef, newWallet);
+  } catch {}
+
+  return newWallet;
+}
+
 export function listenToWallet(ownerId: string, role: 'seller' | 'delivery_partner', callback: (wallet: Wallet | null) => void) {
   const fetchWallet = async () => {
     try {
@@ -1435,6 +1549,11 @@ export function listenToWallet(ownerId: string, role: 'seller' | 'delivery_partn
         callback(mapWalletFromDb(data));
         return;
       }
+
+      // If not present in Supabase, automatically create it with starting balance 0
+      const newWallet = await ensureWalletExists(ownerId, role, 0);
+      callback(newWallet);
+      return;
     } catch {}
 
     try {
@@ -1443,7 +1562,8 @@ export function listenToWallet(ownerId: string, role: 'seller' | 'delivery_partn
       if (!snap.empty) {
         callback(snap.docs[0].data() as Wallet);
       } else {
-        callback(null);
+        const fallbackWallet = await ensureWalletExists(ownerId, role, 0);
+        callback(fallbackWallet);
       }
     } catch {
       callback(null);
@@ -1462,8 +1582,6 @@ export function listenToWallet(ownerId: string, role: 'seller' | 'delivery_partn
   const unsubFs = onSnapshot(q, (snap) => {
     if (!snap.empty) {
       callback(snap.docs[0].data() as Wallet);
-    } else {
-      callback(null);
     }
   });
 

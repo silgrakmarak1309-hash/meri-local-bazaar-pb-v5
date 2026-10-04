@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   Bike,
-  Power,
   Package,
   MapPin,
   Phone,
@@ -35,6 +34,7 @@ import {
   markDeliveryPickedUp,
   markDeliveryOutForDelivery,
   completeDeliveryWithOtp,
+  ensureWalletExists,
   listenToWallet,
   listenToWalletTransactions,
   listenToUserPayouts,
@@ -82,17 +82,54 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
 
   useEffect(() => {
     if (!user) return;
-    const unsubPartner = listenToDeliveryPartner(user.uid, (p) => {
-      setPartner(p);
-      setLoading(false);
-      if (p?.bankDetails?.upiId) {
-        setUpiId(p.bankDetails.upiId);
-      }
-    }, user.email);
 
-    const unsubWallet = listenToWallet(user.uid, 'delivery_partner', (w) => setWallet(w));
-    const unsubTx = listenToWalletTransactions(user.uid, (txs) => setTransactions(txs));
-    const unsubPayouts = listenToUserPayouts(user.uid, (ps) => setPayouts(ps));
+    // Detect if the logged in partner maps to silgrakmarak1309 or user ID
+    const isSilgrak =
+      (user.email && user.email.toLowerCase().includes('silgrakmarak1309')) ||
+      user.uid === 'silgrakmarak1309' ||
+      user.displayName?.toLowerCase().includes('silgrak');
+
+    const primaryOwnerId = isSilgrak ? 'silgrakmarak1309' : user.uid;
+
+    // Automatically check for wallet entry in Supabase 'public.wallets' table; if not found, create starting balance 0
+    ensureWalletExists(primaryOwnerId, 'delivery_partner', 0).catch(() => {});
+    if (primaryOwnerId !== user.uid) {
+      ensureWalletExists(user.uid, 'delivery_partner', 0).catch(() => {});
+    }
+
+    const unsubPartner = listenToDeliveryPartner(
+      user.uid,
+      (p) => {
+        if (p) {
+          // Permanently hardcoded to ONLINE (Active) by default without manual button clicks
+          const activePartner: DeliveryPartner = {
+            ...p,
+            isOnline: true,
+          };
+          setPartner(activePartner);
+          setLoading(false);
+          if (p.bankDetails?.upiId) {
+            setUpiId(p.bankDetails.upiId);
+          }
+          // Ensure wallet exists for partner.id in Supabase
+          if (p.id) {
+            ensureWalletExists(p.id, 'delivery_partner', 0).catch(() => {});
+          }
+          // Auto-heal DB state so is_online is true in Supabase
+          if (!p.isOnline) {
+            toggleDeliveryPartnerOnline(p.id, true).catch(() => {});
+          }
+        } else {
+          setPartner(null);
+          setLoading(false);
+        }
+      },
+      user.email
+    );
+
+    const unsubWallet = listenToWallet(primaryOwnerId, 'delivery_partner', (w) => setWallet(w));
+    const unsubTx = listenToWalletTransactions(primaryOwnerId, (txs) => setTransactions(txs));
+    const unsubPayouts = listenToUserPayouts(primaryOwnerId, (ps) => setPayouts(ps));
 
     return () => {
       unsubPartner();
@@ -170,11 +207,6 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
   // Partner status validation
   const isApproved = partner.status === 'approved';
   const isPending = partner.status === 'pending';
-
-  const handleToggleOnline = async () => {
-    if (!isApproved) return;
-    await toggleDeliveryPartnerOnline(partner.id, !partner.isOnline);
-  };
 
   const handleAccept = async (assignment: DeliveryAssignment) => {
     setActionLoading(assignment.id);
@@ -339,63 +371,34 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
         </div>
       </div>
 
-      {/* Top Hero Banner & Online Toggle */}
+      {/* Top Hero Banner & Always Online Status */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            {partner.photoURL ? (
-              <img
-                src={partner.photoURL}
-                alt={partner.fullName}
-                className="w-14 h-14 rounded-full object-cover border-2 border-amber-500"
-              />
-            ) : (
-              <div className="w-14 h-14 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xl">
-                {partner.fullName.charAt(0)}
-              </div>
-            )}
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-base sm:text-lg font-black text-slate-900">{partner.fullName}</h1>
             <span
-              className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-white ${
-                partner.isOnline ? 'bg-emerald-500' : 'bg-slate-400'
+              className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase ${
+                isApproved
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : isPending
+                  ? 'bg-amber-100 text-amber-800'
+                  : 'bg-red-100 text-red-800'
               }`}
-            />
+            >
+              {partner.status}
+            </span>
           </div>
-
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base sm:text-lg font-black text-slate-900">{partner.fullName}</h1>
-              <span
-                className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase ${
-                  isApproved
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : isPending
-                    ? 'bg-amber-100 text-amber-800'
-                    : 'bg-red-100 text-red-800'
-                }`}
-              >
-                {partner.status}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {partner.vehicleType} • {partner.vehicleNumber} • {partner.serviceArea}
-            </p>
-          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {partner.vehicleType} • {partner.vehicleNumber} • {partner.serviceArea}
+          </p>
         </div>
 
-        {/* Online / Offline Switch */}
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <button
-            onClick={handleToggleOnline}
-            disabled={!isApproved}
-            className={`w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer shadow-xs touch-manipulation active:scale-95 ${
-              partner.isOnline
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
-            } disabled:opacity-50`}
-          >
-            <Power className="w-4 h-4" />
-            <span>{partner.isOnline ? 'You Are ONLINE' : 'Go ONLINE'}</span>
-          </button>
+        {/* Permanent ONLINE Status Badge (Always Active) */}
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold shadow-2xs">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>ONLINE (Active)</span>
+          </div>
         </div>
       </div>
 
@@ -467,13 +470,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
             </span>
           </div>
 
-          {!partner.isOnline ? (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center text-xs text-amber-900">
-              <Power className="w-8 h-8 text-amber-600 mx-auto mb-2" />
-              <p className="font-bold text-sm">You are currently Offline</p>
-              <p className="mt-1 text-slate-600">Switch to "Go ONLINE" above to view and accept delivery tasks.</p>
-            </div>
-          ) : availableAssignments.length === 0 ? (
+          {availableAssignments.length === 0 ? (
             <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-xs shadow-2xs">
               <Package className="w-12 h-12 text-slate-300 mx-auto mb-2" />
               <p className="font-bold text-slate-700 text-sm">No Available Orders Right Now</p>

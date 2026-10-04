@@ -13,7 +13,7 @@ import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
 import { UserProfile, UserRole, Shop, DeliveryPartner } from '../types';
 import { supabase } from '../supabase';
-import { checkUserProfiles } from '../services/dbService';
+import { checkUserProfiles, ensureWalletExists } from '../services/dbService';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -83,6 +83,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         effectiveRole = snap.data().role as UserRole;
       } else if (requestedRole && requestedRole !== 'admin') {
         effectiveRole = requestedRole;
+      }
+
+      // Automatically ensure wallet entry exists in Supabase 'public.wallets' table for delivery partner
+      if (effectiveRole === 'delivery_partner' || hasDeliveryPartner || requestedRole === 'delivery_partner') {
+        const isSilgrak =
+          (fbUser.email && fbUser.email.toLowerCase().includes('silgrakmarak1309')) ||
+          fbUser.uid === 'silgrakmarak1309' ||
+          fbUser.displayName?.toLowerCase().includes('silgrak');
+
+        ensureWalletExists(fbUser.uid, 'delivery_partner', 0).catch(() => {});
+        if (isSilgrak) {
+          ensureWalletExists('silgrakmarak1309', 'delivery_partner', 0).catch(() => {});
+        }
+        if (deliveryPartner?.id) {
+          ensureWalletExists(deliveryPartner.id, 'delivery_partner', 0).catch(() => {});
+        }
       }
 
       if (snap.exists()) {
@@ -449,6 +465,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const targetProfile = demoProfiles[targetRole];
     setUser(targetProfile);
     setRole(targetRole);
+
+    if (targetRole === 'delivery_partner') {
+      ensureWalletExists(targetProfile.uid, 'delivery_partner', 0).catch(() => {});
+      ensureWalletExists('silgrakmarak1309', 'delivery_partner', 0).catch(() => {});
+    }
     localStorage.setItem('bazaarx_auth_user', JSON.stringify(targetProfile));
     localStorage.setItem('bazaarx_demo_user', JSON.stringify(targetProfile));
 
