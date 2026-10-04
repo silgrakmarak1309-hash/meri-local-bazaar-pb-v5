@@ -15,10 +15,11 @@ import {
   Mail,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { Address } from '../../types';
+import { Address, VillageDeliveryRate } from '../../types';
 import { db } from '../../firebase';
 import { collection, query, where, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { supabase } from '../../supabase';
+import { fetchVillageDeliveryRates } from '../../services/dbService';
 
 interface CustomerProfileProps {
   onOpenSellerRegistration?: () => void;
@@ -48,6 +49,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber || '');
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [isAddingAddress, setIsAddingAddress] = useState(false);
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
 
   // Address form fields
   const [addrName, setAddrName] = useState('');
@@ -56,7 +58,41 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   const [addrCity, setAddrCity] = useState('');
   const [addrState, setAddrState] = useState('');
   const [addrPin, setAddrPin] = useState('');
+  const [addrVillage, setAddrVillage] = useState('');
   const [addrType, setAddrType] = useState<'home' | 'work' | 'other'>('home');
+  const [formVillages, setFormVillages] = useState<VillageDeliveryRate[]>([]);
+  const [isLoadingVillages, setIsLoadingVillages] = useState(false);
+
+  // Dynamically fetch villages/localities when user enters or edits pincode
+  useEffect(() => {
+    const cleanPin = addrPin.trim();
+    if (!cleanPin || cleanPin.length < 3) {
+      setFormVillages([]);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingVillages(true);
+
+    fetchVillageDeliveryRates(cleanPin)
+      .then((rates) => {
+        if (!isMounted) return;
+        setFormVillages(rates);
+        if (rates.length > 0 && !addrVillage) {
+          setAddrVillage(rates[0].villageName);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to fetch villages in profile:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingVillages(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [addrPin]);
 
   useEffect(() => {
     if (!user) return;
@@ -72,19 +108,29 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
           .eq('user_id', user.uid)
           .order('created_at', { ascending: true });
         if (!error && data && data.length > 0) {
-          const list: Address[] = data.map((a: any) => ({
-            id: a.id,
-            userId: a.user_id,
-            fullName: a.full_name,
-            phoneNumber: a.phone_number,
-            streetAddress: a.street_address,
-            city: a.city,
-            state: a.state,
-            postalCode: a.postal_code,
-            landmark: a.landmark || undefined,
-            isDefault: Boolean(a.is_default),
-            addressType: a.address_type || 'home',
-          }));
+          const list: Address[] = data.map((a: any) => {
+            let village = a.village;
+            let landmark = a.landmark;
+            if (!village && a.landmark && a.landmark.startsWith('Village: ')) {
+              const parts = a.landmark.split(' | ');
+              village = parts[0].replace('Village: ', '').trim();
+              landmark = parts[1] || undefined;
+            }
+            return {
+              id: a.id,
+              userId: a.user_id,
+              fullName: a.full_name,
+              phoneNumber: a.phone_number,
+              streetAddress: a.street_address,
+              city: a.city,
+              state: a.state,
+              postalCode: a.postal_code,
+              village: village || undefined,
+              landmark: landmark || undefined,
+              isDefault: Boolean(a.is_default),
+              addressType: a.address_type || 'home',
+            };
+          });
           setAddresses(list);
           return;
         }
@@ -139,9 +185,36 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     setIsEditingProfile(false);
   };
 
+  const resetAddressForm = () => {
+    setIsAddingAddress(false);
+    setEditingAddressId(null);
+    setAddrName('');
+    setAddrPhone('');
+    setAddrStreet('');
+    setAddrCity('');
+    setAddrState('');
+    setAddrPin('');
+    setAddrVillage('');
+    setAddrType('home');
+    setFormVillages([]);
+  };
+
+  const handleEditAddress = (addr: Address) => {
+    setEditingAddressId(addr.id);
+    setAddrName(addr.fullName);
+    setAddrPhone(addr.phoneNumber);
+    setAddrStreet(addr.streetAddress);
+    setAddrCity(addr.city);
+    setAddrState(addr.state);
+    setAddrPin(addr.postalCode);
+    setAddrVillage(addr.village || '');
+    setAddrType(addr.addressType);
+    setIsAddingAddress(true);
+  };
+
   const handleAddAddress = async (e: React.FormEvent) => {
     e.preventDefault();
-    const id = 'addr_' + Date.now();
+    const id = editingAddressId || 'addr_' + Date.now();
     const newAddr: Address = {
       id,
       userId: user.uid,
@@ -151,13 +224,16 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
       city: addrCity,
       state: addrState,
       postalCode: addrPin,
+      village: addrVillage.trim() || undefined,
       isDefault: addresses.length === 0,
       addressType: addrType,
     };
 
+    const compositeLandmark = newAddr.village ? `Village: ${newAddr.village}` : null;
+
     // 1. Save in Supabase
     try {
-      await supabase.from('addresses').insert({
+      await supabase.from('addresses').upsert({
         id: newAddr.id,
         user_id: newAddr.userId,
         full_name: newAddr.fullName,
@@ -166,6 +242,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
         city: newAddr.city,
         state: newAddr.state,
         postal_code: newAddr.postalCode,
+        landmark: compositeLandmark,
         is_default: newAddr.isDefault,
         address_type: newAddr.addressType,
       });
@@ -175,13 +252,13 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
 
     // 2. Mirror in Firestore
     try {
-      await setDoc(doc(db, 'addresses', id), newAddr);
-      setAddresses([...addresses, newAddr]);
-      setIsAddingAddress(false);
-      setAddrStreet('');
-      setAddrCity('');
-      setAddrState('');
-      setAddrPin('');
+      await setDoc(doc(db, 'addresses', id), newAddr, { merge: true });
+      if (editingAddressId) {
+        setAddresses(addresses.map((a) => (a.id === id ? newAddr : a)));
+      } else {
+        setAddresses([...addresses, newAddr]);
+      }
+      resetAddressForm();
     } catch (e) {
       console.error('Error adding address:', e);
     }
@@ -307,10 +384,17 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
 
         {isAddingAddress && (
           <form onSubmit={handleAddAddress} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-            <h4 className="text-xs font-bold text-slate-800">Add New Address</h4>
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-800">
+                {editingAddressId ? 'Edit Delivery Address' : 'Add New Address'}
+              </h4>
+              <span className="text-[11px] text-slate-500">
+                Pincode-based village delivery charging
+              </span>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="block text-slate-500 mb-1">Recipient Name</label>
+                <label className="block text-slate-500 mb-1">Recipient Name *</label>
                 <input
                   type="text"
                   required
@@ -321,7 +405,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-slate-500 mb-1">Mobile Number</label>
+                <label className="block text-slate-500 mb-1">Mobile Number *</label>
                 <input
                   type="tel"
                   required
@@ -332,7 +416,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                 />
               </div>
               <div className="sm:col-span-2">
-                <label className="block text-slate-500 mb-1">Flat / House / Street Address</label>
+                <label className="block text-slate-500 mb-1">Flat / House / Street Address *</label>
                 <input
                   type="text"
                   required
@@ -343,40 +427,86 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-slate-500 mb-1">City</label>
+                <label className="block text-slate-500 mb-1">City *</label>
                 <input
                   type="text"
                   required
                   value={addrCity}
                   onChange={(e) => setAddrCity(e.target.value)}
-                  placeholder="e.g. Bengaluru"
+                  placeholder="e.g. Resubelpara"
                   className="w-full p-2 border border-slate-300 rounded bg-white outline-none focus:border-[#2874f0]"
                 />
               </div>
               <div>
-                <label className="block text-slate-500 mb-1">State</label>
+                <label className="block text-slate-500 mb-1">State *</label>
                 <input
                   type="text"
                   required
                   value={addrState}
                   onChange={(e) => setAddrState(e.target.value)}
-                  placeholder="e.g. Karnataka"
+                  placeholder="e.g. Meghalaya"
                   className="w-full p-2 border border-slate-300 rounded bg-white outline-none focus:border-[#2874f0]"
                 />
               </div>
               <div>
-                <label className="block text-slate-500 mb-1">PIN Code</label>
+                <label className="block text-slate-500 mb-1">PIN Code *</label>
                 <input
                   type="text"
                   required
+                  maxLength={6}
                   value={addrPin}
-                  onChange={(e) => setAddrPin(e.target.value)}
-                  placeholder="e.g. 560001"
-                  className="w-full p-2 border border-slate-300 rounded bg-white outline-none focus:border-[#2874f0]"
+                  onChange={(e) => setAddrPin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="e.g. 794114"
+                  className="w-full p-2 border border-slate-300 rounded bg-white outline-none focus:border-[#2874f0] font-semibold text-slate-800"
                 />
               </div>
               <div>
-                <label className="block text-slate-500 mb-1">Type</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-slate-500 font-medium">Village / Locality *</label>
+                  {isLoadingVillages && (
+                    <span className="text-[10px] text-blue-600 font-semibold animate-pulse">
+                      Fetching villages...
+                    </span>
+                  )}
+                </div>
+                {formVillages.length > 0 ? (
+                  <select
+                    required
+                    value={addrVillage}
+                    onChange={(e) => setAddrVillage(e.target.value)}
+                    className="w-full p-2 border border-slate-300 rounded bg-white outline-none focus:border-[#2874f0] text-slate-800 font-semibold cursor-pointer"
+                  >
+                    <option value="">-- Select Village / Locality --</option>
+                    {formVillages.map((v, i) => (
+                      <option key={v.id || i} value={v.villageName}>
+                        {v.villageName} (₹{v.deliveryCharge} delivery fee)
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="space-y-1">
+                    <input
+                      type="text"
+                      required
+                      value={addrVillage}
+                      onChange={(e) => setAddrVillage(e.target.value)}
+                      placeholder={
+                        addrPin.length >= 6
+                          ? 'Enter Village / Locality name'
+                          : 'Enter PIN Code first to see villages'
+                      }
+                      className="w-full p-2 border border-slate-300 rounded bg-white outline-none focus:border-[#2874f0]"
+                    />
+                    {addrPin.length >= 6 && formVillages.length === 0 && !isLoadingVillages && (
+                      <span className="text-[10px] text-slate-400 block">
+                        No registered villages found for PIN {addrPin}. Enter your locality name above.
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-slate-500 mb-1">Address Type</label>
                 <select
                   value={addrType}
                   onChange={(e: any) => setAddrType(e.target.value)}
@@ -391,16 +521,16 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setIsAddingAddress(false)}
-                className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700"
+                onClick={resetAddressForm}
+                className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-4 py-1.5 bg-[#2874f0] text-white text-xs font-bold rounded shadow hover:bg-blue-700"
+                className="px-4 py-1.5 bg-[#2874f0] text-white text-xs font-bold rounded shadow hover:bg-blue-700 cursor-pointer"
               >
-                Save Address
+                {editingAddressId ? 'Update Address' : 'Save Address'}
               </button>
             </div>
           </form>
@@ -410,9 +540,9 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
           {addresses.map((addr) => (
             <div
               key={addr.id}
-              className="p-3 bg-white border border-slate-200 rounded-lg flex items-start justify-between gap-3 text-xs"
+              className="p-3 bg-white border border-slate-200 rounded-lg flex items-start justify-between gap-3 text-xs shadow-2xs hover:border-blue-200 transition"
             >
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-slate-900">{addr.fullName}</span>
                   <span className="text-[10px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.2 rounded uppercase">
@@ -421,17 +551,35 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                   <span className="text-slate-500 font-medium">{addr.phoneNumber}</span>
                 </div>
                 <p className="text-slate-600">
-                  {addr.streetAddress}, {addr.city}, {addr.state} - {addr.postalCode}
+                  {addr.streetAddress}, {addr.city}, {addr.state} -{' '}
+                  <span className="font-bold">{addr.postalCode}</span>
                 </p>
+                {addr.village && (
+                  <div className="pt-0.5">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                      <MapPin className="w-3 h-3 text-emerald-600" />
+                      Village / Locality: {addr.village}
+                    </span>
+                  </div>
+                )}
               </div>
 
-              <button
-                onClick={() => handleDeleteAddress(addr.id)}
-                className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 transition cursor-pointer"
-                title="Delete Address"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => handleEditAddress(addr)}
+                  className="text-slate-500 hover:text-[#2874f0] p-1.5 rounded hover:bg-blue-50 transition cursor-pointer"
+                  title="Edit Address"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => handleDeleteAddress(addr.id)}
+                  className="text-red-500 hover:text-red-700 p-1.5 rounded hover:bg-red-50 transition cursor-pointer"
+                  title="Delete Address"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           ))}
         </div>

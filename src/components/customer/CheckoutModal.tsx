@@ -66,7 +66,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   // Village-based dynamic delivery charge state
   const [activePinCode, setActivePinCode] = useState<string>('');
-  const [availableVillages, setAvailableVillages] = useState<VillageDeliveryRate[]>([]);
   const [selectedVillageName, setSelectedVillageName] = useState<string>('');
   const [dynamicDeliveryFee, setDynamicDeliveryFee] = useState<number>(settings.deliveryBaseCharge);
   const [loadingVillages, setLoadingVillages] = useState<boolean>(false);
@@ -81,6 +80,37 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [newVillage, setNewVillage] = useState('');
   const [newLandmark, setNewLandmark] = useState('');
   const [newType, setNewType] = useState<'home' | 'work' | 'other'>('home');
+  const [newAddressVillages, setNewAddressVillages] = useState<VillageDeliveryRate[]>([]);
+  const [loadingNewAddressVillages, setLoadingNewAddressVillages] = useState<boolean>(false);
+
+  // Dynamically fetch villages when entering PIN code in new address form
+  useEffect(() => {
+    const cleanPin = newPostalCode.trim();
+    if (!cleanPin || cleanPin.length < 3) {
+      setNewAddressVillages([]);
+      return;
+    }
+    let isMounted = true;
+    setLoadingNewAddressVillages(true);
+    fetchVillageDeliveryRates(cleanPin)
+      .then((rates) => {
+        if (!isMounted) return;
+        setNewAddressVillages(rates);
+        if (rates.length > 0 && !newVillage) {
+          setNewVillage(rates[0].villageName);
+        }
+      })
+      .catch((err) => {
+        console.warn('Error fetching villages in new address form:', err);
+      })
+      .finally(() => {
+        if (isMounted) setLoadingNewAddressVillages(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [newPostalCode]);
 
   // Subtotal & Dynamic totals
   const subtotal = singleBuyItem
@@ -103,19 +133,29 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           .eq('user_id', user.uid)
           .order('is_default', { ascending: false });
         if (!error && data && data.length > 0) {
-          const list: Address[] = data.map((a: any) => ({
-            id: a.id,
-            userId: a.user_id,
-            fullName: a.full_name,
-            phoneNumber: a.phone_number,
-            streetAddress: a.street_address,
-            city: a.city,
-            state: a.state,
-            postalCode: a.postal_code,
-            landmark: a.landmark || undefined,
-            isDefault: Boolean(a.is_default),
-            addressType: a.address_type || 'home',
-          }));
+          const list: Address[] = data.map((a: any) => {
+            let village = a.village;
+            let landmark = a.landmark;
+            if (!village && a.landmark && a.landmark.startsWith('Village: ')) {
+              const parts = a.landmark.split(' | ');
+              village = parts[0].replace('Village: ', '').trim();
+              landmark = parts[1] || undefined;
+            }
+            return {
+              id: a.id,
+              userId: a.user_id,
+              fullName: a.full_name,
+              phoneNumber: a.phone_number,
+              streetAddress: a.street_address,
+              city: a.city,
+              state: a.state,
+              postalCode: a.postal_code,
+              village: village || undefined,
+              landmark: landmark || undefined,
+              isDefault: Boolean(a.is_default),
+              addressType: a.address_type || 'home',
+            };
+          });
           setAddresses(list);
           setSelectedAddressId(list[0].id);
           return;
@@ -175,86 +215,73 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     fetchAddresses();
   }, [user]);
 
-  // Fetch village rates dynamically whenever selected address PIN changes
+  // Automatically read pre-selected village from chosen address and fetch corresponding delivery fee
   useEffect(() => {
     const chosenAddress = addresses.find((a) => a.id === selectedAddressId);
-    const pin = (chosenAddress?.postalCode || '').trim();
+    if (!chosenAddress) return;
+
+    const pin = (chosenAddress.postalCode || '').trim();
+    const village = (chosenAddress.village || '').trim();
+
     if (!pin) {
-      setAvailableVillages([]);
+      setDynamicDeliveryFee(settings.deliveryBaseCharge);
+      setSelectedVillageName('');
       return;
     }
 
     setActivePinCode(pin);
+    setSelectedVillageName(village);
     setLoadingVillages(true);
 
-    // Collect product-specific village delivery rates configured by the seller
-    const productVillageRates: VillageDeliveryRate[] = [];
-    checkoutItems.forEach((ci: any) => {
-      const pRates = ci.villageDeliveryRates;
-      const targetPin = (ci.targetPinCode || ci.sellerPinCode || '').trim();
-      if (Array.isArray(pRates) && (!targetPin || targetPin === pin)) {
-        pRates.forEach((vr: any, idx: number) => {
-          if (!productVillageRates.some((exist) => exist.villageName.toLowerCase() === vr.villageName.toLowerCase())) {
-            productVillageRates.push({
-              id: `vrate_${ci.productId}_${idx}`,
-              pinCode: pin,
-              villageName: vr.villageName,
-              deliveryCharge: Number(vr.deliveryCharge) || 0,
-            });
+    // 1. Check if the seller has a product-specific village delivery charge for this village & PIN
+    let matchedSellerFee: number | null = null;
+    if (village) {
+      const lowerVillage = village.toLowerCase();
+      for (const ci of checkoutItems as any[]) {
+        const pRates = ci.villageDeliveryRates;
+        const targetPin = (ci.targetPinCode || ci.sellerPinCode || '').trim();
+        if (Array.isArray(pRates) && (!targetPin || targetPin === pin)) {
+          const match = pRates.find(
+            (vr: any) => vr.villageName.toLowerCase() === lowerVillage
+          );
+          if (match && typeof match.deliveryCharge === 'number') {
+            matchedSellerFee = match.deliveryCharge;
+            break;
           }
-        });
+        }
       }
-    });
+    }
 
+    if (matchedSellerFee !== null) {
+      setDynamicDeliveryFee(matchedSellerFee);
+      setLoadingVillages(false);
+      return;
+    }
+
+    // 2. Fetch village rates for this PIN from database
     fetchVillageDeliveryRates(pin)
       .then((rates) => {
-        // Merge: product-configured rates take precedence, followed by general rates
-        const combinedMap = new Map<string, VillageDeliveryRate>();
-        rates.forEach((r) => combinedMap.set(r.villageName.toLowerCase(), r));
-        productVillageRates.forEach((pr) => combinedMap.set(pr.villageName.toLowerCase(), pr));
-        const combinedRates = Array.from(combinedMap.values());
-
-        setAvailableVillages(combinedRates);
-        // If address already has a village that matches one of the rates, select it
-        const existingVillage = chosenAddress?.village;
-        const matched = combinedRates.find(
-          (r) => r.villageName.toLowerCase() === (existingVillage || '').toLowerCase()
-        );
-        if (matched) {
-          setSelectedVillageName(matched.villageName);
-          setDynamicDeliveryFee(matched.deliveryCharge);
-        } else if (combinedRates.length > 0) {
-          // Select first village by default
-          setSelectedVillageName(combinedRates[0].villageName);
-          setDynamicDeliveryFee(combinedRates[0].deliveryCharge);
-        } else {
-          setSelectedVillageName('');
-          setDynamicDeliveryFee(settings.deliveryBaseCharge);
+        if (village) {
+          const lowerVillage = village.toLowerCase();
+          const matchedDb = rates.find(
+            (r) => r.villageName.toLowerCase() === lowerVillage
+          );
+          if (matchedDb) {
+            setDynamicDeliveryFee(matchedDb.deliveryCharge);
+            return;
+          }
         }
+        // Fallback to platform base delivery charge if no village rate match
+        setDynamicDeliveryFee(settings.deliveryBaseCharge);
       })
       .catch((err) => {
-        console.warn('Error fetching village rates:', err);
-        if (productVillageRates.length > 0) {
-          setAvailableVillages(productVillageRates);
-          setSelectedVillageName(productVillageRates[0].villageName);
-          setDynamicDeliveryFee(productVillageRates[0].deliveryCharge);
-        } else {
-          setDynamicDeliveryFee(settings.deliveryBaseCharge);
-        }
+        console.warn('Error fetching village rate for checkout address:', err);
+        setDynamicDeliveryFee(settings.deliveryBaseCharge);
       })
       .finally(() => {
         setLoadingVillages(false);
       });
   }, [selectedAddressId, addresses, settings.deliveryBaseCharge, checkoutItems]);
-
-  // Handler for changing village dropdown
-  const handleSelectVillage = (villageName: string) => {
-    setSelectedVillageName(villageName);
-    const matched = availableVillages.find((v) => v.villageName === villageName);
-    if (matched) {
-      setDynamicDeliveryFee(matched.deliveryCharge);
-    }
-  };
 
   if (!isOpen) return null;
 
@@ -275,6 +302,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       isDefault: addresses.length === 0,
       addressType: newType,
     };
+    const compositeLandmark = newAddr.village
+      ? (newAddr.landmark ? `Village: ${newAddr.village} | ${newAddr.landmark}` : `Village: ${newAddr.village}`)
+      : (newAddr.landmark || null);
+
     try {
       await supabase.from('addresses').insert({
         id: newAddr.id,
@@ -285,7 +316,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         city: newAddr.city,
         state: newAddr.state,
         postal_code: newAddr.postalCode,
-        landmark: newAddr.landmark || null,
+        landmark: compositeLandmark,
         is_default: newAddr.isDefault,
         address_type: newAddr.addressType,
       });
@@ -467,25 +498,61 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-500 font-medium mb-1">PIN Code</label>
+                    <label className="block text-slate-500 font-medium mb-1">PIN Code *</label>
                     <input
                       type="text"
                       required
+                      maxLength={6}
                       value={newPostalCode}
-                      onChange={(e) => setNewPostalCode(e.target.value)}
+                      onChange={(e) => setNewPostalCode(e.target.value.replace(/\D/g, ''))}
                       placeholder="e.g. 794114"
-                      className="w-full p-2 border border-slate-300 rounded outline-none focus:border-[#2874f0]"
+                      className="w-full p-2 border border-slate-300 rounded outline-none focus:border-[#2874f0] font-semibold text-slate-800"
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-500 font-medium mb-1">Village / Locality</label>
-                    <input
-                      type="text"
-                      value={newVillage}
-                      onChange={(e) => setNewVillage(e.target.value)}
-                      placeholder="e.g. Babukona Village"
-                      className="w-full p-2 border border-slate-300 rounded outline-none focus:border-[#2874f0]"
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-slate-500 font-medium">Village / Locality *</label>
+                      {loadingNewAddressVillages && (
+                        <span className="text-[10px] text-blue-600 font-semibold animate-pulse">
+                          Fetching...
+                        </span>
+                      )}
+                    </div>
+                    {newAddressVillages.length > 0 ? (
+                      <select
+                        required
+                        value={newVillage}
+                        onChange={(e) => setNewVillage(e.target.value)}
+                        className="w-full p-2 border border-slate-300 rounded bg-white outline-none focus:border-[#2874f0] text-slate-800 font-semibold cursor-pointer"
+                      >
+                        <option value="">-- Select Village / Locality --</option>
+                        {newAddressVillages.map((v, i) => (
+                          <option key={v.id || i} value={v.villageName}>
+                            {v.villageName} (₹{v.deliveryCharge} delivery fee)
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="space-y-1">
+                        <input
+                          type="text"
+                          required
+                          value={newVillage}
+                          onChange={(e) => setNewVillage(e.target.value)}
+                          placeholder={
+                            newPostalCode.length >= 6
+                              ? 'Enter Village / Locality name'
+                              : 'Enter PIN Code first to see villages'
+                          }
+                          className="w-full p-2 border border-slate-300 rounded outline-none focus:border-[#2874f0]"
+                        />
+                        {newPostalCode.length >= 6 && newAddressVillages.length === 0 && !loadingNewAddressVillages && (
+                          <span className="text-[10px] text-slate-400 block">
+                            No registered villages found for PIN {newPostalCode}. Enter your locality name above.
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="sm:col-span-2">
                     <label className="block text-slate-500 font-medium mb-1">Landmark (Optional)</label>
@@ -545,7 +612,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                           {addr.streetAddress}, {addr.city}, {addr.state} -{' '}
                           <span className="font-bold">{addr.postalCode}</span>
                           {addr.village && (
-                            <span className="ml-1 text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                            <span className="ml-1.5 text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 inline-flex items-center gap-1 text-[11px]">
+                              <MapPin className="w-3 h-3 text-emerald-600" />
                               Village: {addr.village}
                             </span>
                           )}
@@ -558,48 +626,19 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </div>
             )}
 
-            {/* Hyper-local Village Selection Dropdown (Dynamically listed villages under entered PIN code) */}
+            {/* Auto-detected Village and Delivery Fee Confirmation */}
             {selectedAddress && (
-              <div className="mt-3.5 pt-3.5 border-t border-slate-200/80 bg-white p-3.5 rounded-xl border border-blue-100 shadow-2xs">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5 text-[#2874f0]" />
-                    <span>Select Village / Locality in PIN {selectedAddress.postalCode || activePinCode}</span>
-                  </label>
-                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                    Delivery Fee: ₹{dynamicDeliveryFee}
-                  </span>
-                </div>
-
-                <div className="relative">
-                  <select
-                    value={selectedVillageName}
-                    onChange={(e) => handleSelectVillage(e.target.value)}
-                    disabled={loadingVillages}
-                    className="w-full p-2.5 bg-slate-50 hover:bg-white border border-slate-300 focus:border-[#2874f0] focus:ring-1 focus:ring-[#2874f0] rounded-xl text-xs font-medium text-slate-800 outline-none transition appearance-none cursor-pointer"
-                  >
-                    {availableVillages.map((v, idx) => (
-                      <option key={v.id || idx} value={v.villageName}>
-                        {idx + 1}. {v.villageName} — ₹{v.deliveryCharge} Delivery Charge
-                      </option>
-                    ))}
-                    {availableVillages.length === 0 && (
-                      <option value="">
-                        {loadingVillages ? 'Loading villages...' : 'Default Village Area — ₹' + settings.deliveryBaseCharge}
-                      </option>
-                    )}
-                  </select>
-                  <div className="absolute right-3 top-2.5 pointer-events-none text-slate-400 text-xs font-bold">
-                    ▼
-                  </div>
-                </div>
-
-                <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+              <div className="mt-3 p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2 text-emerald-950 font-medium">
+                  <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>
-                    Rates scale dynamically from <strong>₹10</strong> based on village distance.
+                    Selected Village: <strong>{selectedAddress.village || 'Standard Area'}</strong> (PIN {selectedAddress.postalCode || activePinCode})
                   </span>
-                  <span className="font-semibold text-slate-700">
-                    {availableVillages.length} Villages available
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-slate-500 block">Locality Delivery Fee</span>
+                  <span className="text-xs font-bold text-emerald-800 bg-emerald-100/70 px-2 py-0.5 rounded-full">
+                    {loadingVillages ? 'Calculating...' : `₹${dynamicDeliveryFee}`}
                   </span>
                 </div>
               </div>
