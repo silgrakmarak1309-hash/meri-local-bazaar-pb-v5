@@ -100,10 +100,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, onB
               </span>
             )}
           </div>
-
-          <div className="text-[10px] text-emerald-600 font-semibold mt-0.5">
-            Free Delivery
-          </div>
         </div>
 
         {/* Action Buttons */}
