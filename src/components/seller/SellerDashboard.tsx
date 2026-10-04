@@ -30,6 +30,7 @@ import {
   listenToShopByOwnerId,
   listenToSellerProducts,
   listenToSellerOrders,
+  ensureWalletExists,
   listenToWallet,
   listenToWalletTransactions,
   listenToUserPayouts,
@@ -75,14 +76,28 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
 
   useEffect(() => {
     if (!user) return;
-    const unsubShop = listenToShopByOwnerId(user.uid, (data) => {
-      setShop(data);
-      setLoading(false);
-    }, user.email);
 
-    const unsubWallet = listenToWallet(user.uid, 'seller', (w) => setWallet(w));
-    const unsubTx = listenToWalletTransactions(user.uid, (txs) => setTransactions(txs));
-    const unsubPayouts = listenToUserPayouts(user.uid, (ps) => setPayouts(ps));
+    // 1. Seller Wallet Sync: Immediately check and auto-create wallet in Supabase using authenticated owner_id (user.uid)
+    ensureWalletExists(user.uid, 'seller', 0).catch(() => {});
+
+    const unsubShop = listenToShopByOwnerId(
+      user.uid,
+      (data) => {
+        setShop(data);
+        setLoading(false);
+        if (data?.ownerId && data.ownerId !== user.uid) {
+          ensureWalletExists(data.ownerId, 'seller', 0).catch(() => {});
+        }
+      },
+      user.email
+    );
+
+    // Collect all candidate IDs (authenticated owner_id, shop owner_id, shop id)
+    const sellerOwnerIds = Array.from(new Set([user.uid, shop?.ownerId, shop?.id].filter(Boolean) as string[]));
+
+    const unsubWallet = listenToWallet(sellerOwnerIds, 'seller', (w) => setWallet(w));
+    const unsubTx = listenToWalletTransactions(sellerOwnerIds, (txs) => setTransactions(txs));
+    const unsubPayouts = listenToUserPayouts(sellerOwnerIds, (ps) => setPayouts(ps));
 
     return () => {
       unsubShop();
@@ -90,7 +105,7 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
       unsubTx();
       unsubPayouts();
     };
-  }, [user]);
+  }, [user, shop?.id, shop?.ownerId]);
 
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>('default');
 

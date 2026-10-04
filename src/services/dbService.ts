@@ -1466,7 +1466,42 @@ export async function ensureWalletExists(
     }
   } catch {}
 
-  // 1c. If role is delivery_partner and ownerId is or maps to silgrakmarak1309
+  // 1c. If role is seller, handle authenticated owner_id vs shop ID resolution
+  if (role === 'seller') {
+    try {
+      const { data: shopRow } = await supabase
+        .from('shops')
+        .select('id, owner_id')
+        .or(`owner_id.eq.${ownerId},id.eq.${ownerId}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (shopRow) {
+        // If ownerId was passed as shop.id, map to the authenticated shop.owner_id (UUID)
+        if (ownerId === shopRow.id && shopRow.owner_id && shopRow.owner_id !== ownerId) {
+          return await ensureWalletExists(shopRow.owner_id, 'seller', startingBalance);
+        }
+
+        // Check if legacy wallet existed under shopRow.id
+        if (shopRow.id && shopRow.id !== ownerId) {
+          const { data: legacyWallet } = await supabase
+            .from('wallets')
+            .select('*')
+            .eq('owner_id', shopRow.id)
+            .eq('role', 'seller')
+            .maybeSingle();
+
+          if (legacyWallet && (Number(legacyWallet.current_balance) > 0 || Number(legacyWallet.total_earnings) > 0)) {
+            startingBalance = Math.max(startingBalance, Number(legacyWallet.current_balance) || 0);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Seller shop mapping note:', e);
+    }
+  }
+
+  // 1d. If role is delivery_partner and ownerId is or maps to silgrakmarak1309
   if (role === 'delivery_partner') {
     const isSilgrak =
       ownerId.toLowerCase().includes('silgrak') ||
@@ -1536,35 +1571,50 @@ export async function ensureWalletExists(
   return newWallet;
 }
 
-export function listenToWallet(ownerId: string, role: 'seller' | 'delivery_partner', callback: (wallet: Wallet | null) => void) {
+export function listenToWallet(
+  ownerId: string | string[],
+  role: 'seller' | 'delivery_partner',
+  callback: (wallet: Wallet | null) => void
+) {
+  const ids = Array.isArray(ownerId) ? ownerId.filter(Boolean) : [ownerId].filter(Boolean);
+  const primaryOwnerId = ids[0] || '';
+
   const fetchWallet = async () => {
     try {
-      const { data, error } = await supabase
-        .from('wallets')
-        .select('*')
-        .eq('owner_id', ownerId)
-        .eq('role', role)
-        .maybeSingle();
-      if (!error && data) {
-        callback(mapWalletFromDb(data));
-        return;
+      // 1. Try finding wallet by any of the candidate ownerIds
+      for (const oid of ids) {
+        const { data, error } = await supabase
+          .from('wallets')
+          .select('*')
+          .eq('owner_id', oid)
+          .eq('role', role)
+          .maybeSingle();
+
+        if (!error && data) {
+          callback(mapWalletFromDb(data));
+          return;
+        }
       }
 
-      // If not present in Supabase, automatically create it with starting balance 0
-      const newWallet = await ensureWalletExists(ownerId, role, 0);
+      // If not present in Supabase, automatically create it with default balance of 0 using primaryOwnerId
+      const newWallet = await ensureWalletExists(primaryOwnerId, role, 0);
       callback(newWallet);
       return;
-    } catch {}
+    } catch (err) {
+      console.warn('Error fetching or ensuring wallet in listenToWallet:', err);
+    }
 
     try {
-      const q = query(collection(db, 'wallets'), where('ownerId', '==', ownerId), where('role', '==', role));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        callback(snap.docs[0].data() as Wallet);
-      } else {
-        const fallbackWallet = await ensureWalletExists(ownerId, role, 0);
-        callback(fallbackWallet);
+      for (const oid of ids) {
+        const q = query(collection(db, 'wallets'), where('ownerId', '==', oid), where('role', '==', role));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          callback(snap.docs[0].data() as Wallet);
+          return;
+        }
       }
+      const fallbackWallet = await ensureWalletExists(primaryOwnerId, role, 0);
+      callback(fallbackWallet);
     } catch {
       callback(null);
     }
@@ -1572,68 +1622,84 @@ export function listenToWallet(ownerId: string, role: 'seller' | 'delivery_partn
 
   fetchWallet();
 
-  const channel = createRealtimeChannel(`realtime:wallet_${ownerId}_${role}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'wallets', filter: `owner_id=eq.${ownerId}` }, () => {
-      fetchWallet();
+  const channel = createRealtimeChannel(`realtime:wallet_${primaryOwnerId}_${role}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wallets' }, (payload: any) => {
+      const changedOwnerId = payload?.new?.owner_id || payload?.old?.owner_id;
+      if (!changedOwnerId || ids.includes(changedOwnerId)) {
+        fetchWallet();
+      }
     })
     .subscribe();
 
-  const q = query(collection(db, 'wallets'), where('ownerId', '==', ownerId), where('role', '==', role));
-  const unsubFs = onSnapshot(q, (snap) => {
-    if (!snap.empty) {
-      callback(snap.docs[0].data() as Wallet);
-    }
+  const unsubs = ids.map((oid) => {
+    const q = query(collection(db, 'wallets'), where('ownerId', '==', oid), where('role', '==', role));
+    return onSnapshot(q, (snap) => {
+      if (!snap.empty) {
+        callback(snap.docs[0].data() as Wallet);
+      }
+    });
   });
 
   return () => {
     supabase.removeChannel(channel);
-    unsubFs();
+    unsubs.forEach((u) => u());
   };
 }
 
-export function listenToWalletTransactions(ownerId: string, callback: (txs: WalletTransaction[]) => void) {
+export function listenToWalletTransactions(
+  ownerId: string | string[],
+  callback: (txs: WalletTransaction[]) => void
+) {
+  const ids = Array.isArray(ownerId) ? ownerId.filter(Boolean) : [ownerId].filter(Boolean);
+  const primaryId = ids[0] || '';
+
   const fetchTxs = async () => {
     try {
-      const { data, error } = await supabase
-        .from('wallet_transactions')
-        .select('*')
-        .eq('owner_id', ownerId)
-        .order('created_at', { ascending: false });
+      let queryBuilder = supabase.from('wallet_transactions').select('*');
+      if (ids.length > 1) {
+        queryBuilder = queryBuilder.in('owner_id', ids);
+      } else {
+        queryBuilder = queryBuilder.eq('owner_id', primaryId);
+      }
+      const { data, error } = await queryBuilder.order('created_at', { ascending: false });
       if (!error && data) {
         callback(data.map(mapTxFromDb));
         return;
       }
     } catch {}
 
+    const allTxs: WalletTransaction[] = [];
     try {
-      const q = query(collection(db, 'wallet_transactions'), where('ownerId', '==', ownerId));
-      const snap = await getDocs(q);
-      const list: WalletTransaction[] = [];
-      snap.forEach((d) => list.push(d.data() as WalletTransaction));
-      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      callback(list);
-    } catch {}
+      for (const id of ids) {
+        const q = query(collection(db, 'wallet_transactions'), where('ownerId', '==', id));
+        const snap = await getDocs(q);
+        snap.forEach((d) => allTxs.push(d.data() as WalletTransaction));
+      }
+      allTxs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(allTxs);
+    } catch {
+      callback([]);
+    }
   };
 
   fetchTxs();
 
-  const channel = createRealtimeChannel(`realtime:wallet_txs_${ownerId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_transactions', filter: `owner_id=eq.${ownerId}` }, () => {
+  const channel = createRealtimeChannel(`realtime:wallet_txs_${primaryId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_transactions' }, () => {
       fetchTxs();
     })
     .subscribe();
 
-  const q = query(collection(db, 'wallet_transactions'), where('ownerId', '==', ownerId));
-  const unsubFs = onSnapshot(q, (snap) => {
-    const list: WalletTransaction[] = [];
-    snap.forEach((d) => list.push(d.data() as WalletTransaction));
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    callback(list);
+  const unsubs = ids.map((id) => {
+    const q = query(collection(db, 'wallet_transactions'), where('ownerId', '==', id));
+    return onSnapshot(q, () => {
+      fetchTxs();
+    });
   });
 
   return () => {
     supabase.removeChannel(channel);
-    unsubFs();
+    unsubs.forEach((u) => u());
   };
 }
 
@@ -1710,34 +1776,25 @@ export async function addWalletTransaction(
   referenceId?: string,
   orderId?: string
 ) {
-  const walletId = `wallet_${ownerId}`;
-  let currentWallet: Wallet | null = null;
-
-  try {
-    const { data } = await supabase.from('wallets').select('*').eq('id', walletId).maybeSingle();
-    if (data) currentWallet = mapWalletFromDb(data);
-  } catch {}
-
-  if (!currentWallet) {
+  // If role is seller, resolve shop.id to shop.owner_id (the authenticated UUID owner_id)
+  let targetOwnerId = ownerId;
+  if (role === 'seller') {
     try {
-      const snap = await getDoc(doc(db, 'wallets', walletId));
-      if (snap.exists()) currentWallet = snap.data() as Wallet;
+      const { data: shopRow } = await supabase
+        .from('shops')
+        .select('id, owner_id')
+        .or(`id.eq.${ownerId},owner_id.eq.${ownerId}`)
+        .limit(1)
+        .maybeSingle();
+      if (shopRow?.owner_id) {
+        targetOwnerId = shopRow.owner_id;
+      }
     } catch {}
   }
 
-  if (!currentWallet) {
-    currentWallet = {
-      id: walletId,
-      ownerId,
-      role,
-      currentBalance: 0,
-      totalEarnings: 0,
-      todayEarnings: 0,
-      pendingEarnings: 0,
-      totalPayouts: 0,
-      updatedAt: new Date().toISOString(),
-    };
-  }
+  // Get or auto-create the wallet row in Supabase
+  const currentWallet = await ensureWalletExists(targetOwnerId, role, 0);
+  const walletId = currentWallet.id || `wallet_${targetOwnerId}_${role}`;
 
   let newBalance = currentWallet.currentBalance;
   let newTotal = currentWallet.totalEarnings;
@@ -1768,7 +1825,7 @@ export async function addWalletTransaction(
   const tx: WalletTransaction = {
     id: txId,
     walletId,
-    ownerId,
+    ownerId: targetOwnerId,
     role,
     type,
     amount,
@@ -1780,7 +1837,7 @@ export async function addWalletTransaction(
 
   // 1. Supabase persist
   try {
-    await supabase.from('wallets').upsert(mapWalletToDb(updatedWallet));
+    await supabase.from('wallets').upsert(mapWalletToDb(updatedWallet), { onConflict: 'owner_id,role' });
     await supabase.from('wallet_transactions').insert(mapTxToDb(tx));
   } catch (e) {
     console.warn('Supabase wallet transaction save error:', e);
@@ -1829,43 +1886,58 @@ export function listenToPayoutRequests(callback: (payouts: PayoutRequest[]) => v
   };
 }
 
-export function listenToUserPayouts(requesterId: string, callback: (payouts: PayoutRequest[]) => void) {
+export function listenToUserPayouts(
+  requesterId: string | string[],
+  callback: (payouts: PayoutRequest[]) => void
+) {
+  const ids = Array.isArray(requesterId) ? requesterId.filter(Boolean) : [requesterId].filter(Boolean);
+  const primaryId = ids[0] || '';
+
   const fetchMine = async () => {
     try {
-      const { data, error } = await supabase
-        .from('payout_requests')
-        .select('*')
-        .eq('requester_id', requesterId)
-        .order('created_at', { ascending: false });
+      let queryBuilder = supabase.from('payout_requests').select('*');
+      if (ids.length > 1) {
+        queryBuilder = queryBuilder.in('requester_id', ids);
+      } else {
+        queryBuilder = queryBuilder.eq('requester_id', primaryId);
+      }
+      const { data, error } = await queryBuilder.order('created_at', { ascending: false });
       if (!error && data) {
         callback(data.map(mapPayoutFromDb));
         return;
       }
     } catch {}
-    const q = query(collection(db, 'payout_requests'), where('requesterId', '==', requesterId));
-    const snap = await getDocs(q);
-    const list: PayoutRequest[] = [];
-    snap.forEach((d) => list.push(d.data() as PayoutRequest));
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    callback(list);
+
+    const allPayouts: PayoutRequest[] = [];
+    try {
+      for (const id of ids) {
+        const q = query(collection(db, 'payout_requests'), where('requesterId', '==', id));
+        const snap = await getDocs(q);
+        snap.forEach((d) => allPayouts.push(d.data() as PayoutRequest));
+      }
+      allPayouts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(allPayouts);
+    } catch {
+      callback([]);
+    }
   };
+
   fetchMine();
 
-  const channel = createRealtimeChannel(`realtime:payouts_${requesterId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'payout_requests', filter: `requester_id=eq.${requesterId}` }, () => fetchMine())
+  const channel = createRealtimeChannel(`realtime:payouts_${primaryId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'payout_requests' }, () => fetchMine())
     .subscribe();
 
-  const q = query(collection(db, 'payout_requests'), where('requesterId', '==', requesterId));
-  const unsubFs = onSnapshot(q, (snap) => {
-    const list: PayoutRequest[] = [];
-    snap.forEach((d) => list.push(d.data() as PayoutRequest));
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    callback(list);
+  const unsubs = ids.map((id) => {
+    const q = query(collection(db, 'payout_requests'), where('requesterId', '==', id));
+    return onSnapshot(q, () => {
+      fetchMine();
+    });
   });
 
   return () => {
     supabase.removeChannel(channel);
-    unsubFs();
+    unsubs.forEach((u) => u());
   };
 }
 

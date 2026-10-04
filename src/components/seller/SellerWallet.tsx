@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Wallet as WalletIcon,
   CreditCard,
@@ -29,9 +29,15 @@ export const SellerWallet: React.FC<SellerWalletProps> = ({
   settings,
 }) => {
   const [payoutAmount, setPayoutAmount] = useState<number>(settings.minPayoutAmount);
-  const [upiId, setUpiId] = useState<string>(shop.bankDetails.upiId || '');
+  const [upiId, setUpiId] = useState<string>(shop?.bankDetails?.upiId || '');
   const [isRequesting, setIsRequesting] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    if (shop?.bankDetails?.upiId && !upiId) {
+      setUpiId(shop.bankDetails.upiId);
+    }
+  }, [shop?.bankDetails?.upiId]);
 
   const balance = wallet ? wallet.currentBalance : 0;
   const totalEarnings = wallet ? wallet.totalEarnings : 0;
@@ -64,14 +70,16 @@ export const SellerWallet: React.FC<SellerWalletProps> = ({
 
     setIsRequesting(true);
     try {
+      // Use the authenticated owner_id (e.g., UUID format like jg2BitKsPT4xGg35E9cC8YG2)
+      const targetOwnerId = wallet?.ownerId || shop?.ownerId || '';
       await requestPayout({
-        requesterId: shop.ownerId,
-        requesterName: shop.ownerName || shop.shopName,
+        requesterId: targetOwnerId,
+        requesterName: shop?.ownerName || shop?.shopName || 'Shop Owner',
         requesterRole: 'seller',
-        shopId: shop.id,
+        shopId: shop?.id || '',
         amount: payoutAmount,
         upiId: upiId.trim(),
-        bankDetails: shop.bankDetails,
+        bankDetails: shop?.bankDetails,
       });
 
       setMsg({

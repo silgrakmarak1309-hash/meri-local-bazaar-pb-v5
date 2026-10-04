@@ -101,6 +101,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       }
 
+      // Automatically ensure wallet entry exists in Supabase 'public.wallets' table for sellers using authenticated owner_id
+      if (effectiveRole === 'seller' || hasShop || requestedRole === 'seller') {
+        ensureWalletExists(fbUser.uid, 'seller', 0).catch(() => {});
+        if (shop?.id) {
+          ensureWalletExists(shop.id, 'seller', 0).catch(() => {});
+        }
+        if (shop?.ownerId && shop.ownerId !== fbUser.uid) {
+          ensureWalletExists(shop.ownerId, 'seller', 0).catch(() => {});
+        }
+      }
+
       if (snap.exists()) {
         const profile = snap.data() as UserProfile;
         if (effectiveRole !== profile.role && (hasShop || hasDeliveryPartner)) {
@@ -465,6 +476,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const targetProfile = demoProfiles[targetRole];
     setUser(targetProfile);
     setRole(targetRole);
+
+    if (targetRole === 'seller') {
+      ensureWalletExists(targetProfile.uid, 'seller', 0).catch(() => {});
+    }
 
     if (targetRole === 'delivery_partner') {
       ensureWalletExists(targetProfile.uid, 'delivery_partner', 0).catch(() => {});
