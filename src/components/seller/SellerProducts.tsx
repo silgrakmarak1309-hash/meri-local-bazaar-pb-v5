@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Plus,
   Box,
@@ -13,6 +13,7 @@ import {
   Eye,
   EyeOff,
   MapPin,
+  UploadCloud,
 } from 'lucide-react';
 import { Product, Shop } from '../../types';
 import { saveProduct, deleteProduct } from '../../services/dbService';
@@ -36,15 +37,51 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
   const [stock, setStock] = useState<number>(20);
   const [sku, setSku] = useState('');
   const [imageUrl, setImageUrl] = useState('');
-  const [specKey, setSpecKey] = useState('');
-  const [specVal, setSpecVal] = useState('');
-  const [specs, setSpecs] = useState<Record<string, string>>({});
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [imageFileName, setImageFileName] = useState('');
+  const [imageFileSize, setImageFileSize] = useState('');
+  const [imageError, setImageError] = useState<string | null>(null);
   const [deliveryAvailable, setDeliveryAvailable] = useState(true);
   const [loading, setLoading] = useState(false);
 
   // Delivery Charges by Location
   const [targetPinCode, setTargetPinCode] = useState<string>('');
   const [villageRows, setVillageRows] = useState<Array<{ villageName: string; deliveryCharge: number }>>([]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setImageError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      setImageError('File size exceeds 2MB limit. Please choose a smaller image.');
+      return;
+    }
+
+    setImageFileName(file.name);
+    setImageFileSize(`${(file.size / 1024).toFixed(1)} KB`);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setImageUrl(reader.result);
+      }
+    };
+    reader.onerror = () => {
+      setImageError('Failed to read image file. Please try again.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveImage = () => {
+    setImageUrl('');
+    setImageFileName('');
+    setImageFileSize('');
+    setImageError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const openAddModal = () => {
     setEditingProduct(null);
@@ -56,7 +93,10 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
     setStock(20);
     setSku('SKU-' + Math.floor(1000 + Math.random() * 9000));
     setImageUrl('');
-    setSpecs({});
+    setImageFileName('');
+    setImageFileSize('');
+    setImageError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setDeliveryAvailable(true);
     setTargetPinCode(shop?.servicePinCode || shop?.postalCode || '794114');
     setVillageRows([]);
@@ -73,7 +113,10 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
     setStock(prod.stock);
     setSku(prod.sku || '');
     setImageUrl(prod.images[0] || '');
-    setSpecs(prod.specifications || {});
+    setImageFileName(prod.images[0] ? 'Current Product Image' : '');
+    setImageFileSize('');
+    setImageError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setDeliveryAvailable(prod.deliveryAvailable);
     setTargetPinCode(prod.targetPinCode || prod.sellerPinCode || shop?.servicePinCode || '794114');
     setVillageRows(
@@ -98,19 +141,6 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
 
   const handleRemoveVillageRow = (index: number) => {
     setVillageRows((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleAddSpec = () => {
-    if (!specKey.trim() || !specVal.trim()) return;
-    setSpecs({ ...specs, [specKey.trim()]: specVal.trim() });
-    setSpecKey('');
-    setSpecVal('');
-  };
-
-  const handleRemoveSpec = (key: string) => {
-    const updated = { ...specs };
-    delete updated[key];
-    setSpecs(updated);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -144,7 +174,7 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
           : [
               'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=600&q=80',
             ],
-        specifications: specs,
+        specifications: editingProduct?.specifications || {},
         isActive: editingProduct ? editingProduct.isActive : true,
         isApproved: editingProduct ? editingProduct.isApproved : true,
         deliveryAvailable,
@@ -404,15 +434,82 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
                 </div>
               </div>
 
+              {/* Product Photo Upload (Phone Gallery & Files) */}
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">Product Image URL</label>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Product Photo / Image
+                </label>
+
                 <input
-                  type="url"
-                  value={imageUrl}
-                  onChange={(e) => setImageUrl(e.target.value)}
-                  placeholder="https://images.unsplash.com/..."
-                  className="w-full p-2 border border-slate-300 rounded outline-none focus:border-emerald-600"
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="hidden"
                 />
+
+                {!imageUrl ? (
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border-2 border-dashed border-slate-300 hover:border-emerald-600 bg-slate-50 hover:bg-emerald-50/40 rounded-xl p-4 sm:p-5 text-center cursor-pointer transition flex flex-col items-center justify-center gap-2 group"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-105 transition">
+                      <UploadCloud className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-800">
+                        Choose File or Upload Image
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Tap to choose photo from phone gallery or file manager (JPG, PNG, WEBP)
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-14 h-14 rounded-lg bg-white border border-slate-200 overflow-hidden shrink-0">
+                        <img
+                          src={imageUrl}
+                          alt="Product preview"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-800 truncate max-w-[200px] sm:max-w-xs">
+                          {imageFileName || 'product-image.jpg'}
+                        </p>
+                        {imageFileSize && (
+                          <span className="text-[11px] text-emerald-700 font-semibold block">
+                            Size: {imageFileSize}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="text-[11px] text-emerald-700 hover:text-emerald-800 font-bold underline mt-0.5 cursor-pointer"
+                        >
+                          Change photo
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleRemoveImage}
+                      className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition cursor-pointer shrink-0"
+                      title="Remove image"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {imageError && (
+                  <p className="text-[11px] text-red-600 font-semibold mt-1">
+                    {imageError}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -424,52 +521,6 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
                   placeholder="Key features, specifications, and product summary..."
                   className="w-full p-2 border border-slate-300 rounded outline-none focus:border-emerald-600"
                 />
-              </div>
-
-              {/* Specifications Builder */}
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <span className="block font-bold text-slate-700 mb-2">Technical Specifications</span>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="text"
-                    value={specKey}
-                    onChange={(e) => setSpecKey(e.target.value)}
-                    placeholder="Attribute (e.g. Battery)"
-                    className="flex-1 p-1.5 border border-slate-300 rounded bg-white"
-                  />
-                  <input
-                    type="text"
-                    value={specVal}
-                    onChange={(e) => setSpecVal(e.target.value)}
-                    placeholder="Value (e.g. 30 Hours)"
-                    className="flex-1 p-1.5 border border-slate-300 rounded bg-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddSpec}
-                    className="px-3 py-1 bg-slate-800 text-white font-bold rounded hover:bg-slate-900"
-                  >
-                    Add
-                  </button>
-                </div>
-
-                <div className="space-y-1">
-                  {Object.entries(specs).map(([k, v]) => (
-                    <div
-                      key={k}
-                      className="flex items-center justify-between bg-white px-2 py-1 rounded border border-slate-200 text-[11px]"
-                    >
-                      <span className="font-medium text-slate-600">{k}: {v}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveSpec(k)}
-                        className="text-red-500 hover:text-red-700"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
               </div>
 
               {/* Delivery Charges by Location */}
