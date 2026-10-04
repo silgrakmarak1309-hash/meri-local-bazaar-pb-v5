@@ -501,6 +501,8 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
           shop={shop}
           products={products}
           onOpenPostAd={() => setIsPostAdOpen(true)}
+          onDeleteProduct={(id) => setProducts((prev) => prev.filter((p) => p.id !== id))}
+          onProductsChange={(updated) => setProducts(updated)}
         />
       )}
 

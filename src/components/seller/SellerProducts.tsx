@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Plus,
   Box,
@@ -16,17 +16,31 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import { Product, Shop } from '../../types';
-import { saveProduct, deleteProduct } from '../../services/dbService';
+import { saveProduct, deleteProduct, toggleProductActive } from '../../services/dbService';
 
 interface SellerProductsProps {
   shop: Shop;
   products: Product[];
   onOpenPostAd?: () => void;
+  onDeleteProduct?: (productId: string) => void;
+  onProductsChange?: (updatedProducts: Product[]) => void;
 }
 
-export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, onOpenPostAd }) => {
+export const SellerProducts: React.FC<SellerProductsProps> = ({
+  shop,
+  products,
+  onOpenPostAd,
+  onDeleteProduct,
+  onProductsChange,
+}) => {
+  const [localProducts, setLocalProducts] = useState<Product[]>(products);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+
+  useEffect(() => {
+    setLocalProducts(products);
+  }, [products]);
 
   // Form fields
   const [name, setName] = useState('');
@@ -186,6 +200,22 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
       };
 
       await saveProduct(productData);
+      setLocalProducts((prev) => {
+        const idx = prev.findIndex((p) => p.id === productData.id);
+        if (idx > -1) {
+          const copy = [...prev];
+          copy[idx] = productData;
+          return copy;
+        }
+        return [productData, ...prev];
+      });
+      if (onProductsChange) {
+        onProductsChange(
+          localProducts.some((p) => p.id === productData.id)
+            ? localProducts.map((p) => (p.id === productData.id ? productData : p))
+            : [productData, ...localProducts]
+        );
+      }
       setIsModalOpen(false);
     } catch (err) {
       console.error('Save product error:', err);
@@ -195,12 +225,36 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
   };
 
   const handleToggleActive = async (prod: Product) => {
-    await saveProduct({ ...prod, isActive: !prod.isActive });
+    const nextStatus = !prod.isActive;
+    const updated = localProducts.map((p) =>
+      p.id === prod.id ? { ...p, isActive: nextStatus } : p
+    );
+    setLocalProducts(updated);
+    if (onProductsChange) {
+      onProductsChange(updated);
+    }
+    await toggleProductActive(prod.id, nextStatus);
   };
 
   const handleDelete = async (prodId: string) => {
-    if (confirm('Are you sure you want to delete this product?')) {
+    setDeletingId(prodId);
+    // 1. Immediately remove from local catalog list so UI refreshes without manual reload
+    const updated = localProducts.filter((p) => p.id !== prodId);
+    setLocalProducts(updated);
+    if (onDeleteProduct) {
+      onDeleteProduct(prodId);
+    }
+    if (onProductsChange) {
+      onProductsChange(updated);
+    }
+
+    // 2. Persist deletion in database
+    try {
       await deleteProduct(prodId);
+    } catch (err) {
+      console.error('Delete product error:', err);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -209,7 +263,7 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base sm:text-lg font-black text-slate-900">
-            Product Catalog ({products.length})
+            Product Catalog ({localProducts.length})
           </h2>
           <p className="text-xs text-slate-500">
             Manage your shop products, pricing, specifications, and available stock
@@ -237,7 +291,7 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
         </div>
       </div>
 
-      {products.length === 0 ? (
+      {localProducts.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-200 p-8 text-center shadow-2xs">
           <Box className="w-12 h-12 text-slate-300 mx-auto mb-2" />
           <h3 className="font-bold text-slate-800 text-sm">No Products Listed Yet</h3>
@@ -253,7 +307,7 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {products.map((prod) => (
+          {localProducts.map((prod) => (
             <div
               key={prod.id}
               className={`bg-white rounded-xl border p-3 flex flex-col justify-between shadow-2xs transition ${
@@ -323,11 +377,18 @@ export const SellerProducts: React.FC<SellerProductsProps> = ({ shop, products, 
                     <Edit2 className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => handleDelete(prod.id)}
-                    className="min-h-[36px] min-w-[36px] flex items-center justify-center p-2 rounded-lg hover:bg-red-50 text-red-500 transition touch-manipulation active:scale-95 cursor-pointer"
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleDelete(prod.id);
+                    }}
+                    disabled={deletingId === prod.id}
+                    className="min-h-[36px] min-w-[36px] flex items-center justify-center p-2 rounded-lg hover:bg-red-50 text-red-500 hover:text-red-700 transition touch-manipulation active:scale-95 cursor-pointer disabled:opacity-40"
                     title="Delete Product"
+                    aria-label="Delete Product"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className={`w-4 h-4 ${deletingId === prod.id ? 'animate-pulse text-red-700' : ''}`} />
                   </button>
                 </div>
               </div>

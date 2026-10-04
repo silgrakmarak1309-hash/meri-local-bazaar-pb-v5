@@ -1230,17 +1230,30 @@ export async function saveProduct(product: Product) {
 
 export async function deleteProduct(productId: string) {
   try {
+    await supabase.from('cart_items').delete().eq('product_id', productId);
+  } catch {}
+
+  try {
     const { error } = await supabase.from('products').delete().eq('id', productId);
     if (error) {
       console.warn('Supabase product delete warning:', error.message);
+      await supabase.from('products').update({ is_active: false, is_approved: false, updated_at: new Date().toISOString() }).eq('id', productId);
     }
   } catch (err) {
     console.error('Supabase product delete exception:', err);
+    try {
+      await supabase.from('products').update({ is_active: false, is_approved: false, updated_at: new Date().toISOString() }).eq('id', productId);
+    } catch {}
   }
 
   try {
     await deleteDoc(doc(db, 'products', productId));
-  } catch {}
+  } catch (fErr) {
+    console.warn('Firestore product delete notice:', fErr);
+    try {
+      await updateDoc(doc(db, 'products', productId), { isActive: false, isApproved: false, isDeleted: true, updatedAt: new Date().toISOString() });
+    } catch {}
+  }
 }
 
 export async function toggleProductApproval(productId: string, isApproved: boolean) {
