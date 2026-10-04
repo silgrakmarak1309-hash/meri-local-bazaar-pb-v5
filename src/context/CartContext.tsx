@@ -139,21 +139,35 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  // Purge demo Bangalore PIN if cached in localStorage
+  useEffect(() => {
+    if (localStorage.getItem('bazaarx_buyer_pin_code') === '123456') {
+      localStorage.removeItem('bazaarx_buyer_pin_code');
+    }
+  }, []);
+
   const addToCart = (product: Product, quantity = 1, overrideBuyerPin?: string): { success: boolean; message?: string } => {
-    // 1. Mandatory Cart Validation: buyer_pin_code == seller_pin_code
+    // 1. Mandatory Cart Validation: check local area restriction without blocking valid marketplace purchases
     if (platformSettings.localPinCodeRestriction) {
+      const stored = localStorage.getItem('bazaarx_buyer_pin_code');
+      if (stored === '123456') {
+        localStorage.removeItem('bazaarx_buyer_pin_code');
+      }
       const activeBuyerPin = (
         overrideBuyerPin ||
-        localStorage.getItem('bazaarx_buyer_pin_code') ||
-        '123456'
+        (stored && stored !== '123456' ? stored : '') ||
+        (user?.deliveryPinCode && user.deliveryPinCode !== '123456' ? user.deliveryPinCode : '')
       ).trim();
 
-      const sellerPin = (product.sellerPinCode || product.shopPinCode || '').trim();
+      const sellerPin = (product.targetPinCode || product.sellerPinCode || product.shopPinCode || '').trim();
 
-      if (sellerPin && sellerPin !== activeBuyerPin) {
-        const errMsg = 'Sorry, this product is currently available only in your local area.';
-        setLastCartError(errMsg);
-        return { success: false, message: errMsg };
+      // Only restrict if an explicit buyer PIN is configured and differs from seller PIN, and delivery is strictly local
+      if (activeBuyerPin && sellerPin && sellerPin !== activeBuyerPin) {
+        if (!product.deliveryAvailable && (!product.villageDeliveryRates || product.villageDeliveryRates.length === 0)) {
+          const errMsg = `This product is available for PIN ${sellerPin}. Your selected PIN is ${activeBuyerPin}.`;
+          setLastCartError(errMsg);
+          return { success: false, message: errMsg };
+        }
       }
     }
 

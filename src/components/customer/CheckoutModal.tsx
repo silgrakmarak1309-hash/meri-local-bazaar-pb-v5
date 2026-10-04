@@ -16,7 +16,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { Address, PlatformSettings, PaymentMethod, Order, VillageDeliveryRate } from '../../types';
 import { createOrder, fetchVillageDeliveryRates } from '../../services/dbService';
-import { doc, getDocs, collection, query, where, setDoc } from 'firebase/firestore';
+import { doc, getDocs, collection, query, where, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { supabase } from '../../supabase';
 
@@ -121,9 +121,24 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const platformFee = settings.platformFee;
   const totalAmount = subtotal + deliveryFee + platformFee;
 
-  // Load customer addresses
+  // Load customer addresses (strictly dynamic user addresses only, purging any demo mock addresses)
   useEffect(() => {
     if (!user) return;
+
+    const isDemoMockAddress = (a: { streetAddress?: string; city?: string; postalCode?: string }) => {
+      const street = (a.streetAddress || '').toLowerCase();
+      const city = (a.city || '').toLowerCase();
+      const pin = (a.postalCode || '').trim();
+      return (
+        street.includes('green glen') ||
+        street.includes('flat 402') ||
+        street.includes('bellandur') ||
+        city.includes('bengaluru') ||
+        city.includes('bangalore') ||
+        pin === '123456'
+      );
+    };
+
     const fetchAddresses = async () => {
       // 1. Try Supabase addresses
       try {
@@ -132,8 +147,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           .select('*')
           .eq('user_id', user.uid)
           .order('is_default', { ascending: false });
+
         if (!error && data && data.length > 0) {
-          const list: Address[] = data.map((a: any) => {
+          const list: Address[] = [];
+          for (const a of data) {
             let village = a.village;
             let landmark = a.landmark;
             if (!village && a.landmark && a.landmark.startsWith('Village: ')) {
@@ -141,7 +158,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               village = parts[0].replace('Village: ', '').trim();
               landmark = parts[1] || undefined;
             }
-            return {
+            const addrObj: Address = {
               id: a.id,
               userId: a.user_id,
               fullName: a.full_name,
@@ -155,10 +172,22 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               isDefault: Boolean(a.is_default),
               addressType: a.address_type || 'home',
             };
-          });
-          setAddresses(list);
-          setSelectedAddressId(list[0].id);
-          return;
+
+            // Purge demo Bangalore mock address if present
+            if (isDemoMockAddress(addrObj)) {
+              supabase.from('addresses').delete().eq('id', a.id).then(() => {});
+              deleteDoc(doc(db, 'addresses', a.id)).catch(() => {});
+            } else {
+              list.push(addrObj);
+            }
+          }
+
+          if (list.length > 0) {
+            setAddresses(list);
+            setSelectedAddressId(list[0].id);
+            setShowNewAddressForm(false);
+            return;
+          }
         }
       } catch (err) {
         // Fallback
@@ -169,44 +198,24 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         const q = query(collection(db, 'addresses'), where('userId', '==', user.uid));
         const snap = await getDocs(q);
         const list: Address[] = [];
-        snap.forEach((d) => list.push(d.data() as Address));
+        snap.forEach((d) => {
+          const addr = d.data() as Address;
+          if (isDemoMockAddress(addr)) {
+            deleteDoc(doc(db, 'addresses', addr.id || d.id)).catch(() => {});
+          } else {
+            list.push(addr);
+          }
+        });
 
         if (list.length > 0) {
           setAddresses(list);
           setSelectedAddressId(list[0].id);
+          setShowNewAddressForm(false);
         } else {
-          // Provide default initial address if none exists
-          const defaultAddr: Address = {
-            id: 'addr_' + Date.now(),
-            userId: user.uid,
-            fullName: user.displayName || 'Customer',
-            phoneNumber: user.phoneNumber || '+91 98765 00000',
-            streetAddress: 'Flat 402, Green Glen Layout, Bellandur',
-            city: 'Bengaluru',
-            state: 'Karnataka',
-            postalCode: '123456',
-            landmark: 'Near Central Mall',
-            isDefault: true,
-            addressType: 'home',
-          };
-          await setDoc(doc(db, 'addresses', defaultAddr.id), defaultAddr);
-          try {
-            await supabase.from('addresses').upsert({
-              id: defaultAddr.id,
-              user_id: defaultAddr.userId,
-              full_name: defaultAddr.fullName,
-              phone_number: defaultAddr.phoneNumber,
-              street_address: defaultAddr.streetAddress,
-              city: defaultAddr.city,
-              state: defaultAddr.state,
-              postal_code: defaultAddr.postalCode,
-              landmark: defaultAddr.landmark || null,
-              is_default: defaultAddr.isDefault,
-              address_type: defaultAddr.addressType,
-            });
-          } catch {}
-          setAddresses([defaultAddr]);
-          setSelectedAddressId(defaultAddr.id);
+          // No addresses exist yet: display clean new address form directly
+          setAddresses([]);
+          setSelectedAddressId('');
+          setShowNewAddressForm(true);
         }
       } catch (e) {
         console.warn('Addresses fetch error:', e);
@@ -473,7 +482,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                       required
                       value={newStreet}
                       onChange={(e) => setNewStreet(e.target.value)}
-                      placeholder="e.g. #24, Green Glen Apartment"
+                      placeholder="e.g. House No. 12, Main Road"
                       className="w-full p-2 border border-slate-300 rounded outline-none focus:border-[#2874f0]"
                     />
                   </div>
@@ -581,6 +590,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   </button>
                 </div>
               </form>
+            ) : addresses.length === 0 ? (
+              <div className="text-center p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <p className="text-xs font-semibold text-slate-700">No delivery address saved yet</p>
+                <button
+                  type="button"
+                  onClick={() => setShowNewAddressForm(true)}
+                  className="px-3 py-1.5 bg-[#2874f0] text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition cursor-pointer"
+                >
+                  + Add Delivery Address
+                </button>
+              </div>
             ) : (
               <div className="space-y-2">
                 {addresses.map((addr) => (

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Star, ShoppingCart, Zap, Check } from 'lucide-react';
 import { Product } from '../../types';
 import { useCart } from '../../context/CartContext';
@@ -11,11 +11,31 @@ interface ProductCardProps {
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, onBuyNow }) => {
   const { addToCart, items } = useCart();
-  const inCart = items.some((it) => it.productId === product.id);
+  const cartItem = items.find((it) => it.productId === product.id);
+  const inCart = Boolean(cartItem);
+  const [justAdded, setJustAdded] = useState(false);
 
   const discountPercent = product.price > product.discountPrice
     ? Math.round(((product.price - product.discountPrice) / product.price) * 100)
     : 0;
+
+  const handleAddToCart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (product.stock === 0) return;
+    const res = addToCart(product, 1);
+    if (res.success) {
+      setJustAdded(true);
+      setTimeout(() => setJustAdded(false), 1800);
+    }
+  };
+
+  const handleBuyNow = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (product.stock === 0 || !onBuyNow) return;
+    onBuyNow(product);
+  };
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs hover:shadow-md transition duration-200 flex flex-col justify-between group">
@@ -105,35 +125,37 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect, onB
         {/* Action Buttons */}
         <div className="mt-3 pt-2 border-t border-slate-100 flex items-center gap-2">
           <button
-            onClick={() => addToCart(product, 1)}
+            type="button"
+            onClick={handleAddToCart}
             disabled={product.stock === 0}
-            className={`flex-1 min-h-[38px] py-2 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer touch-manipulation ${
-              inCart
-                ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
-                : 'bg-yellow-400 hover:bg-yellow-500 text-slate-900 shadow-2xs'
+            className={`flex-1 min-h-[38px] py-2 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer touch-manipulation select-none ${
+              justAdded || inCart
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                : 'bg-[#ff9f00] hover:bg-[#f39700] text-slate-900 shadow-2xs font-extrabold'
             } disabled:opacity-40 disabled:cursor-not-allowed`}
           >
-            {inCart ? (
+            {justAdded || inCart ? (
               <>
-                <Check className="w-4 h-4" />
-                <span>Added</span>
+                <Check className="w-4 h-4 shrink-0" />
+                <span>{justAdded ? 'Added! ✓' : `In Cart (${cartItem?.quantity || 1})`}</span>
               </>
             ) : (
               <>
-                <ShoppingCart className="w-4 h-4" />
-                <span>Add</span>
+                <ShoppingCart className="w-4 h-4 shrink-0" />
+                <span>Add to Cart</span>
               </>
             )}
           </button>
 
           {onBuyNow && (
             <button
-              onClick={() => onBuyNow(product)}
+              type="button"
+              onClick={handleBuyNow}
               disabled={product.stock === 0}
-              className="flex-1 min-h-[38px] py-2 px-2.5 bg-[#fb641b] hover:bg-[#e85b17] text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-2xs touch-manipulation disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex-1 min-h-[38px] py-2 px-2 bg-[#fb641b] hover:bg-[#e85b17] text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-2xs touch-manipulation select-none disabled:opacity-40 disabled:cursor-not-allowed font-extrabold"
             >
-              <Zap className="w-4 h-4 fill-current" />
-              <span>Buy</span>
+              <Zap className="w-4 h-4 fill-current shrink-0" />
+              <span>Buy Now</span>
             </button>
           )}
         </div>

@@ -99,6 +99,20 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     setDisplayName(user.displayName || '');
     setPhoneNumber(user.phoneNumber || '');
 
+    const isDemoMockAddress = (a: { streetAddress?: string; city?: string; postalCode?: string }) => {
+      const street = (a.streetAddress || '').toLowerCase();
+      const city = (a.city || '').toLowerCase();
+      const pin = (a.postalCode || '').trim();
+      return (
+        street.includes('green glen') ||
+        street.includes('flat 402') ||
+        street.includes('bellandur') ||
+        city.includes('bengaluru') ||
+        city.includes('bangalore') ||
+        pin === '123456'
+      );
+    };
+
     const fetchAddresses = async () => {
       // 1. Primary Supabase fetch
       try {
@@ -108,7 +122,8 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
           .eq('user_id', user.uid)
           .order('created_at', { ascending: true });
         if (!error && data && data.length > 0) {
-          const list: Address[] = data.map((a: any) => {
+          const list: Address[] = [];
+          for (const a of data) {
             let village = a.village;
             let landmark = a.landmark;
             if (!village && a.landmark && a.landmark.startsWith('Village: ')) {
@@ -116,7 +131,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
               village = parts[0].replace('Village: ', '').trim();
               landmark = parts[1] || undefined;
             }
-            return {
+            const addrObj: Address = {
               id: a.id,
               userId: a.user_id,
               fullName: a.full_name,
@@ -130,9 +145,17 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
               isDefault: Boolean(a.is_default),
               addressType: a.address_type || 'home',
             };
-          });
-          setAddresses(list);
-          return;
+            if (isDemoMockAddress(addrObj)) {
+              supabase.from('addresses').delete().eq('id', a.id).then(() => {});
+              deleteDoc(doc(db, 'addresses', a.id)).catch(() => {});
+            } else {
+              list.push(addrObj);
+            }
+          }
+          if (list.length > 0) {
+            setAddresses(list);
+            return;
+          }
         }
       } catch (err) {
         // Fallback
@@ -143,7 +166,14 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
         const q = query(collection(db, 'addresses'), where('userId', '==', user.uid));
         const snap = await getDocs(q);
         const list: Address[] = [];
-        snap.forEach((d) => list.push(d.data() as Address));
+        snap.forEach((d) => {
+          const addr = d.data() as Address;
+          if (isDemoMockAddress(addr)) {
+            deleteDoc(doc(db, 'addresses', addr.id || d.id)).catch(() => {});
+          } else {
+            list.push(addr);
+          }
+        });
         setAddresses(list);
       } catch (e) {
         console.warn('Error fetching addresses:', e);
