@@ -109,6 +109,21 @@ export function mapShopToDb(shop: Partial<Shop>): any {
 }
 
 export function mapProductFromDb(row: any): Product {
+  const specs = row.specifications || {};
+  const targetPinCode =
+    row.target_pin_code ||
+    specs.targetPinCode ||
+    specs._delivery_pricing?.targetPinCode ||
+    row.seller_pin_code ||
+    '';
+  const villageDeliveryRates = Array.isArray(row.village_delivery_rates)
+    ? row.village_delivery_rates
+    : Array.isArray(specs.villageDeliveryRates)
+    ? specs.villageDeliveryRates
+    : Array.isArray(specs._delivery_pricing?.villageDeliveryRates)
+    ? specs._delivery_pricing.villageDeliveryRates
+    : [];
+
   return {
     id: row.id,
     shopId: row.shop_id || '',
@@ -121,7 +136,7 @@ export function mapProductFromDb(row: any): Product {
     stock: Number(row.stock) || 0,
     sku: row.sku || undefined,
     images: Array.isArray(row.images) ? row.images : [],
-    specifications: row.specifications || {},
+    specifications: specs,
     isActive: row.is_active !== false,
     isApproved: row.is_approved !== false,
     deliveryAvailable: row.delivery_available !== false,
@@ -129,6 +144,8 @@ export function mapProductFromDb(row: any): Product {
     reviewCount: Number(row.review_count) || 0,
     sellerPinCode: row.seller_pin_code || '',
     shopPinCode: row.shop_pin_code || '',
+    targetPinCode,
+    villageDeliveryRates,
     createdAt: row.created_at || new Date().toISOString(),
   };
 }
@@ -146,7 +163,17 @@ export function mapProductToDb(p: Partial<Product>): any {
   if (p.stock !== undefined) data.stock = p.stock;
   if (p.sku !== undefined) data.sku = p.sku;
   if (p.images !== undefined) data.images = p.images;
-  if (p.specifications !== undefined) data.specifications = p.specifications;
+
+  // Persist specifications and delivery charges by location in JSONB specifications column
+  const specs: Record<string, any> = { ...(p.specifications || {}) };
+  if (p.targetPinCode !== undefined) {
+    specs.targetPinCode = p.targetPinCode;
+  }
+  if (p.villageDeliveryRates !== undefined) {
+    specs.villageDeliveryRates = p.villageDeliveryRates;
+  }
+  data.specifications = specs;
+
   if (p.isActive !== undefined) data.is_active = p.isActive;
   if (p.isApproved !== undefined) data.is_approved = p.isApproved;
   if (p.deliveryAvailable !== undefined) data.delivery_available = p.deliveryAvailable;
@@ -1166,6 +1193,39 @@ export async function saveProduct(product: Product) {
     const docRef = doc(db, 'products', product.id);
     await setDoc(docRef, toSave, { merge: true });
   } catch {}
+
+  // 3. Upsert location-based village rates to village_delivery_rates table for global checkout resolution
+  if (toSave.targetPinCode && Array.isArray(toSave.villageDeliveryRates) && toSave.villageDeliveryRates.length > 0) {
+    const pin = toSave.targetPinCode.trim();
+    for (const v of toSave.villageDeliveryRates) {
+      if (v.villageName && v.villageName.trim()) {
+        const rateId = `vrate_${pin}_${v.villageName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+        const vRow = {
+          id: rateId,
+          pin_code: pin,
+          village_name: v.villageName.trim(),
+          delivery_charge: Number(v.deliveryCharge) || 0,
+          updated_at: new Date().toISOString(),
+        };
+        try {
+          await supabase.from('village_delivery_rates').upsert(vRow, { onConflict: 'id' });
+        } catch {}
+        try {
+          await setDoc(
+            doc(db, 'village_delivery_rates', rateId),
+            {
+              id: rateId,
+              pinCode: pin,
+              villageName: v.villageName.trim(),
+              deliveryCharge: Number(v.deliveryCharge) || 0,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch {}
+      }
+    }
+  }
 }
 
 export async function deleteProduct(productId: string) {

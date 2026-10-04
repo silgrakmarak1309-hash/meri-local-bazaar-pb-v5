@@ -51,6 +51,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           image: singleBuyItem.images[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=400&q=80',
           stock: singleBuyItem.stock,
           sellerPinCode: singleBuyItem.sellerPinCode,
+          targetPinCode: singleBuyItem.targetPinCode,
+          villageDeliveryRates: singleBuyItem.villageDeliveryRates,
         },
       ]
     : items;
@@ -185,21 +187,46 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setActivePinCode(pin);
     setLoadingVillages(true);
 
+    // Collect product-specific village delivery rates configured by the seller
+    const productVillageRates: VillageDeliveryRate[] = [];
+    checkoutItems.forEach((ci: any) => {
+      const pRates = ci.villageDeliveryRates;
+      const targetPin = (ci.targetPinCode || ci.sellerPinCode || '').trim();
+      if (Array.isArray(pRates) && (!targetPin || targetPin === pin)) {
+        pRates.forEach((vr: any, idx: number) => {
+          if (!productVillageRates.some((exist) => exist.villageName.toLowerCase() === vr.villageName.toLowerCase())) {
+            productVillageRates.push({
+              id: `vrate_${ci.productId}_${idx}`,
+              pinCode: pin,
+              villageName: vr.villageName,
+              deliveryCharge: Number(vr.deliveryCharge) || 0,
+            });
+          }
+        });
+      }
+    });
+
     fetchVillageDeliveryRates(pin)
       .then((rates) => {
-        setAvailableVillages(rates);
+        // Merge: product-configured rates take precedence, followed by general rates
+        const combinedMap = new Map<string, VillageDeliveryRate>();
+        rates.forEach((r) => combinedMap.set(r.villageName.toLowerCase(), r));
+        productVillageRates.forEach((pr) => combinedMap.set(pr.villageName.toLowerCase(), pr));
+        const combinedRates = Array.from(combinedMap.values());
+
+        setAvailableVillages(combinedRates);
         // If address already has a village that matches one of the rates, select it
         const existingVillage = chosenAddress?.village;
-        const matched = rates.find(
+        const matched = combinedRates.find(
           (r) => r.villageName.toLowerCase() === (existingVillage || '').toLowerCase()
         );
         if (matched) {
           setSelectedVillageName(matched.villageName);
           setDynamicDeliveryFee(matched.deliveryCharge);
-        } else if (rates.length > 0) {
+        } else if (combinedRates.length > 0) {
           // Select first village by default
-          setSelectedVillageName(rates[0].villageName);
-          setDynamicDeliveryFee(rates[0].deliveryCharge);
+          setSelectedVillageName(combinedRates[0].villageName);
+          setDynamicDeliveryFee(combinedRates[0].deliveryCharge);
         } else {
           setSelectedVillageName('');
           setDynamicDeliveryFee(settings.deliveryBaseCharge);
@@ -207,12 +234,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       })
       .catch((err) => {
         console.warn('Error fetching village rates:', err);
-        setDynamicDeliveryFee(settings.deliveryBaseCharge);
+        if (productVillageRates.length > 0) {
+          setAvailableVillages(productVillageRates);
+          setSelectedVillageName(productVillageRates[0].villageName);
+          setDynamicDeliveryFee(productVillageRates[0].deliveryCharge);
+        } else {
+          setDynamicDeliveryFee(settings.deliveryBaseCharge);
+        }
       })
       .finally(() => {
         setLoadingVillages(false);
       });
-  }, [selectedAddressId, addresses, settings.deliveryBaseCharge]);
+  }, [selectedAddressId, addresses, settings.deliveryBaseCharge, checkoutItems]);
 
   // Handler for changing village dropdown
   const handleSelectVillage = (villageName: string) => {

@@ -17,6 +17,7 @@ import {
   Store,
   User,
   Trash2,
+  Plus,
 } from 'lucide-react';
 import { Shop, Product } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -68,6 +69,26 @@ export const PostProductAdModal: React.FC<PostProductAdModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Delivery Charges by Location State
+  const [targetPinCode, setTargetPinCode] = useState<string>(shop?.servicePinCode || shop?.postalCode || '794114');
+  const [villageRows, setVillageRows] = useState<Array<{ villageName: string; deliveryCharge: number }>>([]);
+
+  const handleAddVillageRow = () => {
+    setVillageRows((prev) => [...prev, { villageName: '', deliveryCharge: 15 }]);
+  };
+
+  const handleUpdateVillageRow = (index: number, field: 'villageName' | 'deliveryCharge', value: any) => {
+    setVillageRows((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
+  };
+
+  const handleRemoveVillageRow = (index: number) => {
+    setVillageRows((prev) => prev.filter((_, i) => i !== index));
+  };
 
   if (!isOpen) return null;
 
@@ -176,7 +197,13 @@ export const PostProductAdModal: React.FC<PostProductAdModalProps> = ({
 
     try {
       const prodId = 'prod_' + Date.now();
-      const sellerPin = (shop.servicePinCode || shop.postalCode || '123456').trim();
+      const finalTargetPin = (targetPinCode || shop.servicePinCode || shop.postalCode || '794114').trim();
+      const cleanedVillages = villageRows
+        .filter((r) => r.villageName.trim().length > 0)
+        .map((r) => ({
+          villageName: r.villageName.trim(),
+          deliveryCharge: Number(r.deliveryCharge) >= 0 ? Number(r.deliveryCharge) : 0,
+        }));
 
       const newProduct: Product = {
         id: prodId,
@@ -193,7 +220,7 @@ export const PostProductAdModal: React.FC<PostProductAdModalProps> = ({
         specifications: {
           Category: category,
           'Seller ID': user?.uid || shop.ownerId,
-          'Service PIN': sellerPin,
+          'Service PIN': finalTargetPin,
           Condition: 'Brand New',
           'File Name': selectedFile.name,
           'File Size': `${(selectedFile.size / 1024).toFixed(1)} KB`,
@@ -203,8 +230,10 @@ export const PostProductAdModal: React.FC<PostProductAdModalProps> = ({
         deliveryAvailable: true,
         rating: 4.8,
         reviewCount: 0,
-        sellerPinCode: sellerPin,
-        shopPinCode: (shop.postalCode || sellerPin).trim(),
+        sellerPinCode: finalTargetPin,
+        shopPinCode: (shop.postalCode || finalTargetPin).trim(),
+        targetPinCode: finalTargetPin,
+        villageDeliveryRates: cleanedVillages,
         createdAt: new Date().toISOString(),
       };
 
@@ -406,6 +435,114 @@ export const PostProductAdModal: React.FC<PostProductAdModalProps> = ({
               placeholder="Describe key features, package contents, material quality, warranty, and special details..."
               className="w-full p-2.5 border border-slate-300 rounded-xl text-xs bg-white outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 transition resize-none"
             />
+          </div>
+
+          {/* Delivery Charges by Location */}
+          <div className="bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200 space-y-3">
+            <div className="flex items-center gap-2 pb-1 border-b border-slate-200/80">
+              <MapPin className="w-4 h-4 text-emerald-700" />
+              <div>
+                <h4 className="font-bold text-slate-800 text-xs sm:text-sm">
+                  Delivery Charges by Location
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Set up custom village or locality delivery charges under a specific target pincode.
+                </p>
+              </div>
+            </div>
+
+            {/* Target Pincode Field */}
+            <div>
+              <label className="block text-slate-700 font-semibold text-xs mb-1">
+                Target Pincode *
+              </label>
+              <input
+                type="text"
+                maxLength={6}
+                value={targetPinCode}
+                onChange={(e) => setTargetPinCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="e.g. 794114"
+                className="w-full sm:w-1/2 p-2 border border-slate-300 rounded-lg bg-white outline-none focus:border-emerald-600 font-medium text-slate-800 text-xs"
+              />
+              <span className="text-[10px] text-slate-400 block mt-0.5">
+                Customers matching this pincode will see these village delivery fees on checkout.
+              </span>
+            </div>
+
+            {/* Dynamic Repeating Rows */}
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <label className="block text-slate-700 font-semibold text-xs">
+                  Villages / Localities & Delivery Fees
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAddVillageRow}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Add Village & Delivery Fee</span>
+                </button>
+              </div>
+
+              {villageRows.length === 0 ? (
+                <div className="text-center py-3 px-2 bg-white rounded-lg border border-dashed border-slate-300 text-slate-400 text-[11px]">
+                  No custom village delivery rates added yet. Click <span className="font-bold text-emerald-600">+ Add Village & Delivery Fee</span> to set locality fees.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {villageRows.map((row, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-2 bg-white p-2 rounded-lg border border-slate-200 shadow-2xs"
+                    >
+                      <div className="flex-1">
+                        <label className="block text-[10px] text-slate-500 font-medium mb-0.5">
+                          Village / Locality Name
+                        </label>
+                        <input
+                          type="text"
+                          value={row.villageName}
+                          onChange={(e) => handleUpdateVillageRow(idx, 'villageName', e.target.value)}
+                          placeholder="e.g. Near Bazaar Ward"
+                          className="w-full p-1.5 border border-slate-300 rounded text-xs outline-none focus:border-emerald-600"
+                        />
+                      </div>
+
+                      <div className="w-28 sm:w-32">
+                        <label className="block text-[10px] text-slate-500 font-medium mb-0.5">
+                          Delivery Charge (₹)
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-2 top-1.5 text-slate-400 text-xs">₹</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={row.deliveryCharge}
+                            onChange={(e) =>
+                              handleUpdateVillageRow(idx, 'deliveryCharge', Number(e.target.value))
+                            }
+                            placeholder="15"
+                            className="w-full p-1.5 pl-5 border border-slate-300 rounded text-xs outline-none focus:border-emerald-600 font-semibold text-slate-800"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="pt-4">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveVillageRow(idx)}
+                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                          title="Delete Row"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* 5. Product Image Upload (Direct from Phone Gallery / Files, Max 250KB) */}

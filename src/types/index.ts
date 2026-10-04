@@ -66,6 +66,11 @@ export interface ProductSpecification {
   value: string;
 }
 
+export interface ProductVillageRate {
+  villageName: string;
+  deliveryCharge: number;
+}
+
 export interface Product {
   id: string;
   shopId: string;
@@ -87,6 +92,8 @@ export interface Product {
   reviewCount?: number;
   sellerPinCode?: string;
   shopPinCode?: string;
+  targetPinCode?: string;
+  villageDeliveryRates?: ProductVillageRate[];
 }
 
 export interface Category {
@@ -109,6 +116,8 @@ export interface CartItem {
   image: string;
   stock: number;
   sellerPinCode?: string;
+  targetPinCode?: string;
+  villageDeliveryRates?: ProductVillageRate[];
 }
 
 export type OrderStatus =

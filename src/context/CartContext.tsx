@@ -170,6 +170,8 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ...updated[existingIndex],
         quantity: newQty,
         sellerPinCode: effectiveSellerPin || updated[existingIndex].sellerPinCode,
+        targetPinCode: product.targetPinCode || effectiveSellerPin || updated[existingIndex].targetPinCode,
+        villageDeliveryRates: product.villageDeliveryRates || updated[existingIndex].villageDeliveryRates,
       };
     } else {
       const newItem: CartItem = {
@@ -183,6 +185,8 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         image: product.images[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=400&q=80',
         stock: product.stock,
         sellerPinCode: effectiveSellerPin,
+        targetPinCode: product.targetPinCode || effectiveSellerPin,
+        villageDeliveryRates: product.villageDeliveryRates,
       };
       updated = [...items, newItem];
     }
