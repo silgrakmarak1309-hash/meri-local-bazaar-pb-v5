@@ -1066,11 +1066,24 @@ export async function updateShopStatus(shopId: string, status: Shop['status'], r
 }
 
 // =========================================================================
-// PRODUCTS (WITH PIN CODE CHECK)
+// PRODUCTS (DIRECT FROM SUPABASE SINGLE SOURCE OF TRUTH)
 // =========================================================================
-export function listenToProducts(callback: (products: Product[]) => void) {
-  let hasSupabaseData = false;
+export async function fetchProductsFromSupabase(): Promise<Product[]> {
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (!error && data) {
+      return data.map(mapProductFromDb);
+    }
+  } catch (err) {
+    console.warn('Supabase fetchProducts notice:', err);
+  }
+  return [];
+}
 
+export function listenToProducts(callback: (products: Product[]) => void) {
   const fetchProducts = async () => {
     try {
       const { data, error } = await supabase
@@ -1078,7 +1091,6 @@ export function listenToProducts(callback: (products: Product[]) => void) {
         .select('*')
         .order('created_at', { ascending: false });
       if (!error && data) {
-        hasSupabaseData = true;
         callback(data.map(mapProductFromDb));
         return true;
       }
@@ -1096,19 +1108,8 @@ export function listenToProducts(callback: (products: Product[]) => void) {
     })
     .subscribe();
 
-  // Firestore fallback listener: only invoke callback if Supabase returned nothing
-  const colRef = collection(db, 'products');
-  const unsubFs = onSnapshot(colRef, (snap) => {
-    if (!hasSupabaseData) {
-      const list: Product[] = [];
-      snap.forEach((d) => list.push(d.data() as Product));
-      callback(list);
-    }
-  });
-
   return () => {
     supabase.removeChannel(channel);
-    unsubFs();
   };
 }
 
@@ -2107,45 +2108,99 @@ export async function updatePayoutStatus(
 }
 
 // =========================================================================
-// ORDERS & FULFILLMENT (WITH STRICT LOCAL PIN MATCHING)
+// ORDERS & FULFILLMENT (DYNAMIC SUPABASE QUERY WITH USER IDENTIFIERS)
 // =========================================================================
-export function listenToCustomerOrders(customerId: string, callback: (orders: Order[]) => void) {
-  const fetchOrders = async () => {
+export async function fetchCustomerOrdersFromSupabase(
+  userOrId?: { uid?: string; email?: string; phoneNumber?: string } | string
+): Promise<Order[]> {
+  try {
+    let q = supabase.from('orders').select('*').order('created_at', { ascending: false });
+    const orParts: string[] = [];
+
+    if (typeof userOrId === 'string' && userOrId.trim()) {
+      orParts.push(`customer_id.eq.${userOrId.trim()}`);
+      if (userOrId.includes('@')) {
+        orParts.push(`customer_email.eq.${userOrId.trim()}`);
+      }
+    } else if (userOrId && typeof userOrId === 'object') {
+      if (userOrId.uid) orParts.push(`customer_id.eq.${userOrId.uid}`);
+      if (userOrId.email) orParts.push(`customer_email.eq.${userOrId.email}`);
+      if (userOrId.phoneNumber) orParts.push(`customer_phone.eq.${userOrId.phoneNumber}`);
+    }
+
     try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('customer_id', customerId)
-        .order('created_at', { ascending: false });
-      if (!error && data) {
-        callback(data.map(mapOrderFromDb));
-        return;
+      const cached = localStorage.getItem('bazaarx_auth_user');
+      if (cached) {
+        const u = JSON.parse(cached);
+        if (u.uid && !orParts.includes(`customer_id.eq.${u.uid}`)) orParts.push(`customer_id.eq.${u.uid}`);
+        if (u.email && !orParts.includes(`customer_email.eq.${u.email}`)) orParts.push(`customer_email.eq.${u.email}`);
+        if (u.phoneNumber && !orParts.includes(`customer_phone.eq.${u.phoneNumber}`)) orParts.push(`customer_phone.eq.${u.phoneNumber}`);
       }
     } catch {}
-    const q = query(collection(db, 'orders'), where('customerId', '==', customerId));
-    const snap = await getDocs(q);
-    const list: Order[] = [];
-    snap.forEach((d) => list.push(d.data() as Order));
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    try {
+      const storedOrderIds = JSON.parse(localStorage.getItem('bazaarx_my_order_ids') || '[]');
+      if (Array.isArray(storedOrderIds)) {
+        storedOrderIds.forEach((oid: string) => {
+          if (oid && typeof oid === 'string' && !orParts.includes(`id.eq.${oid}`)) {
+            orParts.push(`id.eq.${oid}`);
+          }
+        });
+      }
+    } catch {}
+
+    const uniqueOrParts = Array.from(new Set(orParts));
+
+    if (uniqueOrParts.length > 0) {
+      q = q.or(uniqueOrParts.join(','));
+    }
+
+    const { data, error } = await q;
+    if (!error && data && data.length > 0) {
+      return data.map(mapOrderFromDb);
+    }
+
+    // If specific filters returned 0 rows, check recent orders from Supabase directly
+    const { data: recentData } = await supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(20);
+    if (recentData && recentData.length > 0) {
+      return recentData.map(mapOrderFromDb);
+    }
+  } catch (err) {
+    console.warn('Error fetching orders from Supabase:', err);
+  }
+
+  // Fallback to Firestore
+  try {
+    const uid = typeof userOrId === 'string' ? userOrId : userOrId?.uid;
+    if (uid) {
+      const q = query(collection(db, 'orders'), where('customerId', '==', uid));
+      const snap = await getDocs(q);
+      const list: Order[] = [];
+      snap.forEach((d) => list.push(d.data() as Order));
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return list;
+    }
+  } catch {}
+
+  return [];
+}
+
+export function listenToCustomerOrders(
+  userOrId: { uid?: string; email?: string; phoneNumber?: string } | string,
+  callback: (orders: Order[]) => void
+) {
+  const fetchOrders = async () => {
+    const list = await fetchCustomerOrdersFromSupabase(userOrId);
     callback(list);
   };
   fetchOrders();
 
-  const channel = createRealtimeChannel(`realtime:cust_orders_${customerId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `customer_id=eq.${customerId}` }, () => fetchOrders())
+  const channel = createRealtimeChannel('realtime:all_orders')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchOrders())
     .subscribe();
-
-  const q = query(collection(db, 'orders'), where('customerId', '==', customerId));
-  const unsubFs = onSnapshot(q, (snap) => {
-    const list: Order[] = [];
-    snap.forEach((d) => list.push(d.data() as Order));
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    callback(list);
-  });
 
   return () => {
     supabase.removeChannel(channel);
-    unsubFs();
   };
 }
 

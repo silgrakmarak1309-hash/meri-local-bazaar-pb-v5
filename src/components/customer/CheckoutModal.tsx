@@ -61,6 +61,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [selectedAddressId, setSelectedAddressId] = useState<string>('');
   const [showNewAddressForm, setShowNewAddressForm] = useState<boolean>(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('upi');
+  const [copiedUpi, setCopiedUpi] = useState(false);
+
+  // Hardcoded UPI Details for Greja Marak
+  const upiId = 'grejamarak@okaxis';
+  const upiPayeeName = 'Greja Marak';
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -389,8 +394,23 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         selectedVillageName || undefined
       );
 
-      if (!singleBuyItem) {
-        clearCart();
+      // Unconditionally clear active cart state on order completion
+      clearCart();
+
+      // Store placed order ID in localStorage for instant retrieval across all views
+      try {
+        const stored = JSON.parse(localStorage.getItem('bazaarx_my_order_ids') || '[]');
+        if (!stored.includes(order.id)) {
+          localStorage.setItem('bazaarx_my_order_ids', JSON.stringify([order.id, ...stored]));
+        }
+      } catch {}
+
+      // Trigger UPI app intent deep link if UPI method chosen
+      if (paymentMethod === 'upi') {
+        const upiDeepLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`BazaarX Order ${order.id}`)}`;
+        try {
+          window.location.href = upiDeepLink;
+        } catch {}
       }
 
       onOrderSuccess(order);
@@ -730,6 +750,69 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   Recommended
                 </span>
               </label>
+
+              {/* UPI Transaction Card with grejamarak@okaxis, dynamic total amount, and QR code */}
+              {paymentMethod === 'upi' && (
+                <div className="p-3.5 bg-blue-50/80 border border-blue-200 rounded-xl space-y-3">
+                  <div className="flex flex-col sm:flex-row items-center gap-3.5">
+                    <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs shrink-0 text-center">
+                      <img
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=${encodeURIComponent(
+                          `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`BazaarX Order Payment`)}`
+                        )}`}
+                        alt="UPI Payment QR Code"
+                        className="w-24 h-24 sm:w-28 sm:h-28 mx-auto"
+                      />
+                      <span className="text-[10px] text-slate-500 font-bold block mt-1">Scan & Pay via UPI</span>
+                    </div>
+
+                    <div className="space-y-1.5 flex-1 text-xs">
+                      <div>
+                        <span className="text-slate-500 text-[11px] block">Payee Name</span>
+                        <span className="font-extrabold text-slate-900 text-sm">{upiPayeeName}</span>
+                      </div>
+
+                      <div>
+                        <span className="text-slate-500 text-[11px] block">UPI ID</span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <code className="bg-white px-2.5 py-1 rounded border border-slate-300 font-mono font-bold text-blue-900 text-xs select-all">
+                            {upiId}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard?.writeText(upiId);
+                              setCopiedUpi(true);
+                              setTimeout(() => setCopiedUpi(false), 2000);
+                            }}
+                            className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded text-[11px] font-bold transition cursor-pointer"
+                          >
+                            {copiedUpi ? 'Copied! ✓' : 'Copy UPI ID'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="pt-0.5">
+                        <span className="text-slate-500 text-[11px] block">Payable Amount</span>
+                        <span className="text-base font-black text-emerald-700">₹{totalAmount.toLocaleString('en-IN')}</span>
+                      </div>
+
+                      <div className="pt-1">
+                        <a
+                          href={`upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`BazaarX Order Payment`)}`}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-[#2874f0] hover:bg-blue-700 text-white font-bold rounded-lg text-xs transition shadow-2xs cursor-pointer"
+                        >
+                          <Smartphone className="w-3.5 h-3.5" />
+                          <span>Open UPI App (GPay / PhonePe / Paytm)</span>
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-600 bg-white/90 p-2 rounded-lg border border-blue-100/80">
+                    💡 Click <strong>"Open UPI App"</strong> or scan the QR code to send ₹{totalAmount} to <strong>{upiId}</strong>, then tap <strong>"Confirm Order"</strong> below.
+                  </p>
+                </div>
+              )}
 
               <label
                 className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition ${

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Package,
   Clock,
@@ -14,6 +14,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { Order, OrderStatus } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { fetchCustomerOrdersFromSupabase } from '../../services/dbService';
 
 interface CustomerOrdersProps {
   orders: Order[];
@@ -32,6 +34,38 @@ const ORDER_STATUS_STEPS: { status: OrderStatus; label: string; icon: string }[]
 ];
 
 export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefresh }) => {
+  const { user } = useAuth();
+  const [displayOrders, setDisplayOrders] = useState<Order[]>(orders);
+  const [isFetching, setIsFetching] = useState(false);
+
+  useEffect(() => {
+    if (orders && orders.length > 0) {
+      setDisplayOrders(orders);
+    }
+  }, [orders]);
+
+  const loadOrdersDirectly = async () => {
+    setIsFetching(true);
+    try {
+      const liveOrders = await fetchCustomerOrdersFromSupabase(user || undefined);
+      if (liveOrders && liveOrders.length > 0) {
+        setDisplayOrders(liveOrders);
+        if (!expandedOrderId && liveOrders.length > 0) {
+          setExpandedOrderId(liveOrders[0].id);
+        }
+      }
+    } catch (e) {
+      console.warn('Orders live sync notice:', e);
+    } finally {
+      setIsFetching(false);
+      if (onRefresh) onRefresh();
+    }
+  };
+
+  useEffect(() => {
+    loadOrdersDirectly();
+  }, [user?.uid, user?.email, user?.phoneNumber]);
+
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(
     orders.length > 0 ? orders[0].id : null
   );
@@ -61,21 +95,20 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
     <div className="max-w-4xl mx-auto px-2 sm:px-4 py-4 space-y-4 pb-16">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg sm:text-xl font-black text-slate-900">My Orders ({orders.length})</h1>
+          <h1 className="text-lg sm:text-xl font-black text-slate-900">My Orders ({displayOrders.length})</h1>
           <p className="text-xs text-slate-500">Track and monitor your live shipments in real time</p>
         </div>
-        {onRefresh && (
-          <button
-            onClick={onRefresh}
-            className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-2xs cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Refresh</span>
-          </button>
-        )}
+        <button
+          onClick={loadOrdersDirectly}
+          disabled={isFetching}
+          className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin text-[#2874f0]' : ''}`} />
+          <span>{isFetching ? 'Refreshing...' : 'Refresh'}</span>
+        </button>
       </div>
 
-      {orders.length === 0 ? (
+      {displayOrders.length === 0 ? (
         <div className="bg-white rounded-xl p-10 text-center border border-slate-200 shadow-2xs">
           <Package className="w-16 h-16 text-slate-300 mx-auto mb-3" />
           <h3 className="font-bold text-slate-800 text-base">No Orders Placed Yet</h3>
@@ -85,7 +118,7 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
         </div>
       ) : (
         <div className="space-y-4">
-          {orders.map((order) => {
+          {displayOrders.map((order) => {
             const isExpanded = expandedOrderId === order.id;
             const currentStepIdx = getStatusIndex(order.orderStatus);
 

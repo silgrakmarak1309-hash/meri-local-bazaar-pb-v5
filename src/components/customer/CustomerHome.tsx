@@ -14,6 +14,7 @@ import {
 import { Product, Category } from '../../types';
 import { ProductCard } from './ProductCard';
 import { ProductCardSkeleton } from '../common/SkeletonLoader';
+import { fetchProductsFromSupabase } from '../../services/dbService';
 
 interface CustomerHomeProps {
   products: Product[];
@@ -24,6 +25,7 @@ interface CustomerHomeProps {
   onSelectProduct: (product: Product) => void;
   onBuyNow: (product: Product) => void;
   loading?: boolean;
+  onProductsUpdate?: (products: Product[]) => void;
 }
 
 export const CustomerHome: React.FC<CustomerHomeProps> = ({
@@ -35,7 +37,16 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
   onSelectProduct,
   onBuyNow,
   loading = false,
+  onProductsUpdate,
 }) => {
+  // Direct dynamic fetch from Supabase on mount to guarantee latest database state
+  useEffect(() => {
+    fetchProductsFromSupabase().then((latest) => {
+      if (latest && onProductsUpdate) {
+        onProductsUpdate(latest);
+      }
+    });
+  }, []);
   // Hero Carousel banners
   const banners = [
     {
@@ -91,16 +102,18 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     return matchesSearch && matchesCategory;
   });
 
-  // Unique Deals of the day: select active products with highest discounts or first items (max 4)
-  const dealsOfTheDay = filteredProducts
-    .filter((p) => p.price > p.discountPrice || filteredProducts.length <= 4)
-    .slice(0, 4);
+  // Only separate Deals of the Day if there are at least 4 items overall and some have discount
+  const dealsOfTheDay =
+    !searchQuery && !selectedCategory && filteredProducts.length > 3
+      ? filteredProducts.filter((p) => p.price > p.discountPrice).slice(0, 4)
+      : [];
 
-  // Trending & Popular products: when not searching/filtering, show remaining unique products or all unique products if small catalog
+  // Trending & Popular products: strictly excludes products already shown in Deals of the Day
   const dealsIds = new Set(dealsOfTheDay.map((d) => d.id));
-  const trendingProducts = !searchQuery && !selectedCategory && filteredProducts.length > dealsOfTheDay.length
-    ? filteredProducts.filter((p) => !dealsIds.has(p.id))
-    : filteredProducts;
+  const trendingProducts =
+    !searchQuery && !selectedCategory && dealsOfTheDay.length > 0
+      ? filteredProducts.filter((p) => !dealsIds.has(p.id))
+      : filteredProducts;
 
   return (
     <div className="space-y-4 pb-12">

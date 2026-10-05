@@ -35,6 +35,7 @@ import {
   listenToSettings,
   listenToNotifications,
   listenToCustomerOrders,
+  fetchCustomerOrdersFromSupabase,
   seedMarketplaceIfEmpty,
   clearMarketplaceDemoData,
 } from './services/dbService';
@@ -283,17 +284,20 @@ function MarketplaceMain() {
     return () => unsubNotifs();
   }, [user?.uid, role]);
 
-  // Listen to Customer Orders
+  // Listen to Customer Orders directly from Supabase
   useEffect(() => {
-    if (!user) {
-      setCustomerOrders([]);
-      return;
-    }
-    const unsubOrders = listenToCustomerOrders(user.uid, (orders) => {
+    // Initial fetch to load orders immediately
+    fetchCustomerOrdersFromSupabase(user || undefined).then((orders) => {
+      if (orders && orders.length > 0) {
+        setCustomerOrders(orders);
+      }
+    });
+
+    const unsubOrders = listenToCustomerOrders(user || '', (orders) => {
       setCustomerOrders(orders);
     });
     return () => unsubOrders();
-  }, [user?.uid]);
+  }, [user?.uid, user?.email, user?.phoneNumber]);
 
   // Handle role tab synchronization
   useEffect(() => {
@@ -330,6 +334,7 @@ function MarketplaceMain() {
   };
 
   const handleOrderPlaced = (order: Order) => {
+    setCustomerOrders((prev) => [order, ...prev.filter((o) => o.id !== order.id)]);
     setActiveTab('orders');
     // Scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -407,6 +412,7 @@ function MarketplaceMain() {
                 onSelectProduct={(p) => setSelectedProduct(p)}
                 onBuyNow={handleBuyNow}
                 loading={isProductsLoading}
+                onProductsUpdate={(updatedProds) => setProducts(updatedProds)}
               />
             )}
 
@@ -466,7 +472,11 @@ function MarketplaceMain() {
             {activeTab === 'orders' && (
               <CustomerOrders
                 orders={customerOrders}
-                onRefresh={() => {}}
+                onRefresh={() => {
+                  fetchCustomerOrdersFromSupabase(user || undefined).then((orders) => {
+                    if (orders) setCustomerOrders(orders);
+                  });
+                }}
               />
             )}
 
