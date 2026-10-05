@@ -39,20 +39,16 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
   const [isFetching, setIsFetching] = useState(false);
 
   useEffect(() => {
-    if (orders && orders.length > 0) {
-      setDisplayOrders(orders);
-    }
+    setDisplayOrders(orders);
   }, [orders]);
 
   const loadOrdersDirectly = async () => {
     setIsFetching(true);
     try {
       const liveOrders = await fetchCustomerOrdersFromSupabase(user || undefined);
-      if (liveOrders && liveOrders.length > 0) {
-        setDisplayOrders(liveOrders);
-        if (!expandedOrderId && liveOrders.length > 0) {
-          setExpandedOrderId(liveOrders[0].id);
-        }
+      setDisplayOrders(liveOrders || []);
+      if (liveOrders && liveOrders.length > 0 && !expandedOrderId) {
+        setExpandedOrderId(liveOrders[0].id);
       }
     } catch (e) {
       console.warn('Orders live sync notice:', e);

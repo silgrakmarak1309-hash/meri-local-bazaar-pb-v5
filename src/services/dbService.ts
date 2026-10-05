@@ -2114,30 +2114,40 @@ export async function fetchCustomerOrdersFromSupabase(
   userOrId?: { uid?: string; email?: string; phoneNumber?: string } | string
 ): Promise<Order[]> {
   try {
-    let q = supabase.from('orders').select('*').order('created_at', { ascending: false });
     const orParts: string[] = [];
 
     if (typeof userOrId === 'string' && userOrId.trim()) {
-      orParts.push(`customer_id.eq.${userOrId.trim()}`);
-      if (userOrId.includes('@')) {
-        orParts.push(`customer_email.eq.${userOrId.trim()}`);
+      const cleanId = userOrId.trim();
+      orParts.push(`customer_id.eq.${cleanId}`);
+      if (cleanId.includes('@')) {
+        orParts.push(`customer_email.eq.${cleanId.toLowerCase()}`);
       }
     } else if (userOrId && typeof userOrId === 'object') {
-      if (userOrId.uid) orParts.push(`customer_id.eq.${userOrId.uid}`);
-      if (userOrId.email) orParts.push(`customer_email.eq.${userOrId.email}`);
-      if (userOrId.phoneNumber) orParts.push(`customer_phone.eq.${userOrId.phoneNumber}`);
+      if (userOrId.uid && userOrId.uid.trim()) {
+        orParts.push(`customer_id.eq.${userOrId.uid.trim()}`);
+      }
+      if (userOrId.email && userOrId.email.trim()) {
+        orParts.push(`customer_email.eq.${userOrId.email.trim().toLowerCase()}`);
+      }
+      if (userOrId.phoneNumber && userOrId.phoneNumber.trim()) {
+        orParts.push(`customer_phone.eq.${userOrId.phoneNumber.trim()}`);
+      }
     }
 
-    try {
-      const cached = localStorage.getItem('bazaarx_auth_user');
-      if (cached) {
-        const u = JSON.parse(cached);
-        if (u.uid && !orParts.includes(`customer_id.eq.${u.uid}`)) orParts.push(`customer_id.eq.${u.uid}`);
-        if (u.email && !orParts.includes(`customer_email.eq.${u.email}`)) orParts.push(`customer_email.eq.${u.email}`);
-        if (u.phoneNumber && !orParts.includes(`customer_phone.eq.${u.phoneNumber}`)) orParts.push(`customer_phone.eq.${u.phoneNumber}`);
-      }
-    } catch {}
+    // Only inspect localStorage auth user if no criteria provided yet
+    if (orParts.length === 0) {
+      try {
+        const cached = localStorage.getItem('bazaarx_auth_user');
+        if (cached) {
+          const u = JSON.parse(cached);
+          if (u.uid) orParts.push(`customer_id.eq.${u.uid}`);
+          if (u.email) orParts.push(`customer_email.eq.${u.email.toLowerCase()}`);
+          if (u.phoneNumber) orParts.push(`customer_phone.eq.${u.phoneNumber}`);
+        }
+      } catch {}
+    }
 
+    // Check specific order IDs placed in this active browser session
     try {
       const storedOrderIds = JSON.parse(localStorage.getItem('bazaarx_my_order_ids') || '[]');
       if (Array.isArray(storedOrderIds)) {
@@ -2151,29 +2161,35 @@ export async function fetchCustomerOrdersFromSupabase(
 
     const uniqueOrParts = Array.from(new Set(orParts));
 
-    if (uniqueOrParts.length > 0) {
-      q = q.or(uniqueOrParts.join(','));
+    // STRICT CUSTOMER DATA ISOLATION:
+    // If no identifying criteria exists for this customer, return empty array.
+    // NEVER query the full table without customer filter conditions.
+    if (uniqueOrParts.length === 0) {
+      return [];
     }
 
-    const { data, error } = await q;
-    if (!error && data && data.length > 0) {
-      return data.map(mapOrderFromDb);
-    }
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .or(uniqueOrParts.join(','))
+      .order('created_at', { ascending: false });
 
-    // If specific filters returned 0 rows, check recent orders from Supabase directly
-    const { data: recentData } = await supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(20);
-    if (recentData && recentData.length > 0) {
-      return recentData.map(mapOrderFromDb);
+    if (!error && data) {
+      // Exclude demo records
+      const customerOrders = data.filter(
+        (o) => o.customer_id !== 'demo_customer_uid' && o.customer_email !== 'rahul.customer@example.com'
+      );
+      return customerOrders.map(mapOrderFromDb);
     }
   } catch (err) {
-    console.warn('Error fetching orders from Supabase:', err);
+    console.warn('Error fetching customer orders from Supabase:', err);
   }
 
-  // Fallback to Firestore
+  // Fallback: only if user has a verified UID, query Firestore strictly by that customerId
   try {
     const uid = typeof userOrId === 'string' ? userOrId : userOrId?.uid;
-    if (uid) {
-      const q = query(collection(db, 'orders'), where('customerId', '==', uid));
+    if (uid && uid.trim()) {
+      const q = query(collection(db, 'orders'), where('customerId', '==', uid.trim()));
       const snap = await getDocs(q);
       const list: Order[] = [];
       snap.forEach((d) => list.push(d.data() as Order));
