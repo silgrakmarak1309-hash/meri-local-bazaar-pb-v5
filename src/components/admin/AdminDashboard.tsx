@@ -58,6 +58,7 @@ import {
   saveCategory,
   deleteCategory,
   listenToAllOrders,
+  fetchAllOrdersFromSupabase,
   listenToPayoutRequests,
   updatePayoutStatus,
   updatePlatformSettings,
@@ -1195,7 +1196,21 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
       {activeTab === 'orders' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-extrabold text-slate-900">All Marketplace Orders ({orders.length})</h2>
+            <div>
+              <h2 className="text-base font-extrabold text-slate-900">All Marketplace Orders ({orders.length})</h2>
+              <p className="text-xs text-slate-500">Live global stream across all marketplace vendors</p>
+            </div>
+            <button
+              onClick={() => {
+                fetchAllOrdersFromSupabase().then((res) => {
+                  if (res) setOrders(res);
+                });
+              }}
+              className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-blue-600" />
+              <span>Refresh Feed</span>
+            </button>
           </div>
           <div className="space-y-3">
             {orders.map((o) => (

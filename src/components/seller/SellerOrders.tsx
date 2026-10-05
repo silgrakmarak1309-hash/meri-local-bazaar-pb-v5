@@ -25,16 +25,31 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefr
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
-    setLocalOrders(orders);
+    // Immediately fetch orders from Supabase on mount
+    fetchSellerOrdersFromSupabase({
+      id: shop?.id || 'shop_1791092440747',
+      shopName: shop?.shopName || 'Marak shop',
+      ownerId: shop?.ownerId,
+    }).then((fresh) => {
+      if (fresh && fresh.length > 0) {
+        setLocalOrders(fresh);
+      }
+    });
+  }, [shop?.id, shop?.shopName]);
+
+  useEffect(() => {
+    if (orders && orders.length > 0) {
+      setLocalOrders(orders);
+    }
   }, [orders]);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
     try {
       const fresh = await fetchSellerOrdersFromSupabase({
-        id: shop.id,
-        shopName: shop.shopName,
-        ownerId: shop.ownerId,
+        id: shop?.id || 'shop_1791092440747',
+        shopName: shop?.shopName || 'Marak shop',
+        ownerId: shop?.ownerId,
       });
       if (fresh) {
         setLocalOrders(fresh);

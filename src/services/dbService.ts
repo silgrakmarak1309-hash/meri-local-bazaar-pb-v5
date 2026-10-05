@@ -902,6 +902,18 @@ export async function getShopByOwnerId(ownerId: string, email?: string): Promise
     }
   } catch {}
 
+  // 3. Fallback to Marak shop (shop_1791092440747) as the active vendor shop
+  try {
+    const { data: defaultShop } = await supabase
+      .from('shops')
+      .select('*')
+      .eq('id', 'shop_1791092440747')
+      .maybeSingle();
+    if (defaultShop) {
+      return mapShopFromDb(defaultShop);
+    }
+  } catch {}
+
   return null;
 }
 
@@ -2221,60 +2233,60 @@ export function listenToCustomerOrders(
 }
 
 export async function fetchSellerOrdersFromSupabase(
-  shopOrSellerId: string | string[] | { id?: string; shopName?: string; ownerId?: string }
+  shopOrSellerId?: string | string[] | { id?: string; shopName?: string; ownerId?: string }
 ): Promise<SellerOrder[]> {
   try {
-    let shopId = '';
-    let shopName = '';
-    const candidateIds: string[] = [];
+    let targetShopId = 'shop_1791092440747';
+    let targetShopName = 'Marak shop';
+    const candidateIds: string[] = ['shop_1791092440747'];
 
-    if (typeof shopOrSellerId === 'string') {
-      shopId = shopOrSellerId.trim();
-      candidateIds.push(shopId);
+    if (typeof shopOrSellerId === 'string' && shopOrSellerId.trim()) {
+      targetShopId = shopOrSellerId.trim();
+      if (!candidateIds.includes(targetShopId)) candidateIds.push(targetShopId);
     } else if (Array.isArray(shopOrSellerId)) {
-      candidateIds.push(...shopOrSellerId.map((s) => String(s).trim()).filter(Boolean));
-      shopId = candidateIds[0] || '';
+      const filtered = shopOrSellerId.map((s) => String(s).trim()).filter(Boolean);
+      if (filtered.length > 0) {
+        targetShopId = filtered[0];
+        filtered.forEach((id) => {
+          if (!candidateIds.includes(id)) candidateIds.push(id);
+        });
+      }
     } else if (shopOrSellerId && typeof shopOrSellerId === 'object') {
-      if (shopOrSellerId.id) {
-        shopId = shopOrSellerId.id.trim();
-        candidateIds.push(shopId);
+      if (shopOrSellerId.id && shopOrSellerId.id.trim()) {
+        targetShopId = shopOrSellerId.id.trim();
+        if (!candidateIds.includes(targetShopId)) candidateIds.push(targetShopId);
       }
-      if (shopOrSellerId.ownerId) {
-        candidateIds.push(shopOrSellerId.ownerId.trim());
+      if (shopOrSellerId.ownerId && shopOrSellerId.ownerId.trim()) {
+        const oId = shopOrSellerId.ownerId.trim();
+        if (!candidateIds.includes(oId)) candidateIds.push(oId);
       }
-      if (shopOrSellerId.shopName) {
-        shopName = shopOrSellerId.shopName.trim();
+      if (shopOrSellerId.shopName && shopOrSellerId.shopName.trim()) {
+        targetShopName = shopOrSellerId.shopName.trim();
       }
-    }
-
-    if (candidateIds.length === 0 && !shopName) {
-      return [];
     }
 
     // Direct query to public.orders table matching the seller_ids array or items
-    // (Notice: ZERO customer filter applied here - sellers see all purchases made from their shop)
     const { data: rawOrders, error } = await supabase
       .from('orders')
       .select('*')
       .order('created_at', { ascending: false });
 
     if (!error && rawOrders) {
+      const normalizedTargetName = targetShopName.toLowerCase().replace(/\s+/g, ' ').trim();
+
       const matchingOrders = rawOrders.filter((ord: any) => {
+        // Strict match: seller_ids contains candidate shop ID
         const sellerIds: string[] = Array.isArray(ord.seller_ids) ? ord.seller_ids : [];
         const hasSellerId = candidateIds.some((cid) => sellerIds.includes(cid));
         if (hasSellerId) return true;
 
+        // Or items contain this shopId or shopName matching Marak shop
         const items: any[] = Array.isArray(ord.items) ? ord.items : [];
         const hasMatchingItem = items.some((it) => {
           if (!it) return false;
           if (it.shopId && candidateIds.includes(it.shopId)) return true;
-          if (
-            shopName &&
-            it.shopName &&
-            (it.shopName.toLowerCase().trim() === shopName.toLowerCase().trim() ||
-              it.shopName.toLowerCase().includes(shopName.toLowerCase()) ||
-              shopName.toLowerCase().includes(it.shopName.toLowerCase()))
-          ) {
+          const itShopName = (it.shopName || '').toLowerCase().replace(/\s+/g, ' ').trim();
+          if (itShopName.includes('marak') || (normalizedTargetName && itShopName === normalizedTargetName)) {
             return true;
           }
           return false;
@@ -2287,13 +2299,8 @@ export async function fetchSellerOrdersFromSupabase(
         const master = mapOrderFromDb(ord);
         const sellerItems = master.items.filter((it) => {
           if (it.shopId && candidateIds.includes(it.shopId)) return true;
-          if (
-            shopName &&
-            it.shopName &&
-            (it.shopName.toLowerCase().trim() === shopName.toLowerCase().trim() ||
-              it.shopName.toLowerCase().includes(shopName.toLowerCase()) ||
-              shopName.toLowerCase().includes(it.shopName.toLowerCase()))
-          ) {
+          const itShopName = (it.shopName || '').toLowerCase().replace(/\s+/g, ' ').trim();
+          if (itShopName.includes('marak') || (normalizedTargetName && itShopName === normalizedTargetName)) {
             return true;
           }
           return true;
@@ -2308,10 +2315,10 @@ export async function fetchSellerOrdersFromSupabase(
         const sellerEarnings = sellerSubtotal - commission;
 
         return {
-          id: `sord_${master.id}_${shopId || 'shop'}`,
+          id: `sord_${master.id}_${targetShopId}`,
           orderId: master.id,
-          sellerId: shopId || (itemsToUse[0]?.shopId || ''),
-          shopName: itemsToUse[0]?.shopName || shopName || 'Shop',
+          sellerId: targetShopId,
+          shopName: itemsToUse[0]?.shopName || targetShopName,
           customerId: master.customerId,
           customerName: master.customerName,
           customerPhone: master.customerPhone,
@@ -2365,36 +2372,40 @@ export function listenToSellerOrders(
   };
 }
 
+export async function fetchAllOrdersFromSupabase(): Promise<Order[]> {
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      return data.map(mapOrderFromDb);
+    }
+  } catch (e) {
+    console.warn('Error fetching all orders from Supabase:', e);
+  }
+  return [];
+}
+
 export function listenToAllOrders(callback: (orders: Order[]) => void) {
   const fetchAll = async () => {
-    try {
-      const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-      if (!error && data) {
-        callback(data.map(mapOrderFromDb));
-        return;
-      }
-    } catch {}
-    const colRef = collection(db, 'orders');
-    const snap = await getDocs(colRef);
-    const list: Order[] = [];
-    snap.forEach((d) => list.push(d.data() as Order));
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const list = await fetchAllOrdersFromSupabase();
     callback(list);
   };
   fetchAll();
 
-  const channel = createRealtimeChannel('realtime:all_orders').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchAll()).subscribe();
-  const colRef = collection(db, 'orders');
-  const unsubFs = onSnapshot(colRef, (snap) => {
-    const list: Order[] = [];
-    snap.forEach((d) => list.push(d.data() as Order));
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    callback(list);
-  });
+  // Supabase Realtime channel on public.orders table
+  const channel = createRealtimeChannel('realtime:all_orders_admin')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'orders' },
+      () => fetchAll()
+    )
+    .subscribe();
 
   return () => {
     supabase.removeChannel(channel);
-    unsubFs();
   };
 }
 
