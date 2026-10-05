@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Package,
   Clock,
@@ -11,18 +11,48 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { SellerOrder, OrderStatus, Shop } from '../../types';
-import { updateSellerOrderStatus } from '../../services/dbService';
+import { updateSellerOrderStatus, fetchSellerOrdersFromSupabase } from '../../services/dbService';
 
 interface SellerOrdersProps {
   orders: SellerOrder[];
   shop: Shop;
+  onRefresh?: () => void;
 }
 
-export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop }) => {
+export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefresh }) => {
+  const [localOrders, setLocalOrders] = useState<SellerOrder[]>(orders);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    setLocalOrders(orders);
+  }, [orders]);
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const fresh = await fetchSellerOrdersFromSupabase({
+        id: shop.id,
+        shopName: shop.shopName,
+        ownerId: shop.ownerId,
+      });
+      if (fresh) {
+        setLocalOrders(fresh);
+      }
+    } catch (e) {
+      console.warn('Seller orders refresh notice:', e);
+    } finally {
+      setIsRefreshing(false);
+      if (onRefresh) onRefresh();
+    }
+  };
 
   const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
     setUpdatingId(orderId);
+    // Optimistically update local view
+    setLocalOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+    );
     try {
       await updateSellerOrderStatus(orderId, newStatus, {
         shopId: shop.id,
@@ -30,6 +60,7 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop }) => {
         shopAddress: shop.shopAddress,
         shopPhone: shop.phoneNumber,
       });
+      if (onRefresh) onRefresh();
     } catch (e) {
       console.error('Error updating status:', e);
     } finally {
@@ -59,16 +90,26 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop }) => {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-base sm:text-lg font-black text-slate-900">
-          Order Fulfillment Center ({orders.length})
-        </h2>
-        <p className="text-xs text-slate-500">
-          Fulfill incoming customer orders, pack items, and dispatch to delivery fleet
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base sm:text-lg font-black text-slate-900">
+            Order Fulfillment Center ({localOrders.length})
+          </h2>
+          <p className="text-xs text-slate-500">
+            Fulfill incoming customer orders, pack items, and dispatch to delivery fleet
+          </p>
+        </div>
+        <button
+          onClick={handleManualRefresh}
+          disabled={isRefreshing}
+          className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+          <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+        </button>
       </div>
 
-      {orders.length === 0 ? (
+      {localOrders.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-200 p-8 text-center shadow-2xs">
           <Package className="w-12 h-12 text-slate-300 mx-auto mb-2" />
           <h3 className="font-bold text-slate-800 text-sm">No Orders to Fulfill Yet</h3>
@@ -78,7 +119,7 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop }) => {
         </div>
       ) : (
         <div className="space-y-3">
-          {orders.map((order) => (
+          {localOrders.map((order) => (
             <div
               key={order.id}
               className="bg-white rounded-xl border border-slate-200 shadow-2xs p-4 space-y-3 transition"

@@ -2220,46 +2220,139 @@ export function listenToCustomerOrders(
   };
 }
 
-export function listenToSellerOrders(sellerId: string | string[], callback: (orders: SellerOrder[]) => void) {
-  const ids = Array.isArray(sellerId) ? sellerId.filter(Boolean) : [sellerId].filter(Boolean);
-  const primaryId = ids[0] || '';
+export async function fetchSellerOrdersFromSupabase(
+  shopOrSellerId: string | string[] | { id?: string; shopName?: string; ownerId?: string }
+): Promise<SellerOrder[]> {
+  try {
+    let shopId = '';
+    let shopName = '';
+    const candidateIds: string[] = [];
 
+    if (typeof shopOrSellerId === 'string') {
+      shopId = shopOrSellerId.trim();
+      candidateIds.push(shopId);
+    } else if (Array.isArray(shopOrSellerId)) {
+      candidateIds.push(...shopOrSellerId.map((s) => String(s).trim()).filter(Boolean));
+      shopId = candidateIds[0] || '';
+    } else if (shopOrSellerId && typeof shopOrSellerId === 'object') {
+      if (shopOrSellerId.id) {
+        shopId = shopOrSellerId.id.trim();
+        candidateIds.push(shopId);
+      }
+      if (shopOrSellerId.ownerId) {
+        candidateIds.push(shopOrSellerId.ownerId.trim());
+      }
+      if (shopOrSellerId.shopName) {
+        shopName = shopOrSellerId.shopName.trim();
+      }
+    }
+
+    if (candidateIds.length === 0 && !shopName) {
+      return [];
+    }
+
+    // Direct query to public.orders table matching the seller_ids array or items
+    // (Notice: ZERO customer filter applied here - sellers see all purchases made from their shop)
+    const { data: rawOrders, error } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && rawOrders) {
+      const matchingOrders = rawOrders.filter((ord: any) => {
+        const sellerIds: string[] = Array.isArray(ord.seller_ids) ? ord.seller_ids : [];
+        const hasSellerId = candidateIds.some((cid) => sellerIds.includes(cid));
+        if (hasSellerId) return true;
+
+        const items: any[] = Array.isArray(ord.items) ? ord.items : [];
+        const hasMatchingItem = items.some((it) => {
+          if (!it) return false;
+          if (it.shopId && candidateIds.includes(it.shopId)) return true;
+          if (
+            shopName &&
+            it.shopName &&
+            (it.shopName.toLowerCase().trim() === shopName.toLowerCase().trim() ||
+              it.shopName.toLowerCase().includes(shopName.toLowerCase()) ||
+              shopName.toLowerCase().includes(it.shopName.toLowerCase()))
+          ) {
+            return true;
+          }
+          return false;
+        });
+
+        return hasMatchingItem;
+      });
+
+      const convertedList: SellerOrder[] = matchingOrders.map((ord: any) => {
+        const master = mapOrderFromDb(ord);
+        const sellerItems = master.items.filter((it) => {
+          if (it.shopId && candidateIds.includes(it.shopId)) return true;
+          if (
+            shopName &&
+            it.shopName &&
+            (it.shopName.toLowerCase().trim() === shopName.toLowerCase().trim() ||
+              it.shopName.toLowerCase().includes(shopName.toLowerCase()) ||
+              shopName.toLowerCase().includes(it.shopName.toLowerCase()))
+          ) {
+            return true;
+          }
+          return true;
+        });
+
+        const itemsToUse = sellerItems.length > 0 ? sellerItems : master.items;
+        const sellerSubtotal = itemsToUse.reduce(
+          (sum, it) => sum + (it.discountPrice || it.price) * it.quantity,
+          0
+        );
+        const commission = Math.round((sellerSubtotal * 5) / 100);
+        const sellerEarnings = sellerSubtotal - commission;
+
+        return {
+          id: `sord_${master.id}_${shopId || 'shop'}`,
+          orderId: master.id,
+          sellerId: shopId || (itemsToUse[0]?.shopId || ''),
+          shopName: itemsToUse[0]?.shopName || shopName || 'Shop',
+          customerId: master.customerId,
+          customerName: master.customerName,
+          customerPhone: master.customerPhone,
+          deliveryAddress: master.deliveryAddress || ({} as Address),
+          items: itemsToUse,
+          sellerSubtotal,
+          commissionAmount: commission,
+          sellerEarnings,
+          status: master.orderStatus,
+          createdAt: master.createdAt,
+          updatedAt: master.updatedAt,
+        };
+      });
+
+      return convertedList;
+    }
+  } catch (err) {
+    console.warn('Error fetching seller orders from Supabase:', err);
+  }
+
+  return [];
+}
+
+export function listenToSellerOrders(
+  shopOrSellerId: string | string[] | { id?: string; shopName?: string; ownerId?: string },
+  callback: (orders: SellerOrder[]) => void
+) {
   const fetchOrders = async () => {
-    try {
-      let q = supabase.from('seller_orders').select('*').order('created_at', { ascending: false });
-      if (ids.length > 1) {
-        q = q.in('seller_id', ids);
-      } else if (primaryId) {
-        q = q.eq('seller_id', primaryId);
-      }
-      const { data, error } = await q;
-      if (!error && data) {
-        callback(data.map(mapSellerOrderFromDb));
-        return;
-      }
-    } catch {}
-
-    // Firestore fallback
-    try {
-      const list: SellerOrder[] = [];
-      for (const id of ids) {
-        const q = query(collection(db, 'seller_orders'), where('sellerId', '==', id));
-        const snap = await getDocs(q);
-        snap.forEach((d) => list.push(d.data() as SellerOrder));
-      }
-      // Deduplicate by id
-      const uniqueMap = new Map<string, SellerOrder>();
-      list.forEach((o) => uniqueMap.set(o.id, o));
-      const sorted = Array.from(uniqueMap.values()).sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      callback(sorted);
-    } catch {}
+    const list = await fetchSellerOrdersFromSupabase(shopOrSellerId);
+    callback(list);
   };
 
   fetchOrders();
 
-  const channel = createRealtimeChannel(`realtime:seller_orders_${primaryId}`)
+  // Realtime subscription on public.orders so new customer purchases appear instantly on Seller Dashboard
+  const channel = createRealtimeChannel(`realtime:seller_orders_fulfillment_${Date.now()}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'orders' },
+      () => fetchOrders()
+    )
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'seller_orders' },
@@ -2267,21 +2360,8 @@ export function listenToSellerOrders(sellerId: string | string[], callback: (ord
     )
     .subscribe();
 
-  // Firestore realtime fallback
-  const unsubs: (() => void)[] = [];
-  ids.forEach((id) => {
-    try {
-      const q = query(collection(db, 'seller_orders'), where('sellerId', '==', id));
-      const unsub = onSnapshot(q, () => {
-        fetchOrders();
-      });
-      unsubs.push(unsub);
-    } catch {}
-  });
-
   return () => {
     supabase.removeChannel(channel);
-    unsubs.forEach((u) => u());
   };
 }
 
@@ -2780,6 +2860,17 @@ export async function updateSellerOrderStatus(
 ) {
   const now = new Date().toISOString();
 
+  // 1. Update master public.orders table
+  try {
+    let masterOrderId = sellerOrderId;
+    if (sellerOrderId.startsWith('sord_')) {
+      const parts = sellerOrderId.replace(/^sord_/, '').split('_');
+      masterOrderId = parts[0];
+    }
+    await supabase.from('orders').update({ order_status: newStatus, updated_at: now }).eq('id', masterOrderId);
+  } catch {}
+
+  // 2. Update public.seller_orders table
   try {
     await supabase.from('seller_orders').update({ status: newStatus, updated_at: now }).eq('id', sellerOrderId);
   } catch {}
@@ -2788,7 +2879,7 @@ export async function updateSellerOrderStatus(
     await updateDoc(sordRef, { status: newStatus, updatedAt: now });
   } catch {}
 
-  // Update assignment status if ready
+  // 3. Update assignment status if ready
   try {
     const { data: sord } = await supabase.from('seller_orders').select('*').eq('id', sellerOrderId).single();
     if (sord && (newStatus === 'packed' || newStatus === 'ready_for_pickup')) {

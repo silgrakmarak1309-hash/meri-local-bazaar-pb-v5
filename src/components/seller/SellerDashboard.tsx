@@ -30,6 +30,7 @@ import {
   listenToShopByOwnerId,
   listenToSellerProducts,
   listenToSellerOrders,
+  fetchSellerOrdersFromSupabase,
   ensureWalletExists,
   listenToWallet,
   listenToWalletTransactions,
@@ -116,8 +117,11 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   useEffect(() => {
     if (!shop || !user) return;
     const unsubProd = listenToSellerProducts(shop.id, (p) => setProducts(p));
-    // Listen to orders matching either the shop ID or the seller user UID
-    const unsubOrd = listenToSellerOrders([shop.id, user.uid], (o) => setOrders(o));
+    // Listen to orders matching the active shop ID, shop name, or seller owner UID
+    const unsubOrd = listenToSellerOrders(
+      { id: shop.id, shopName: shop.shopName, ownerId: shop.ownerId || user.uid },
+      (o) => setOrders(o)
+    );
 
     // Supabase Realtime channel for order arrival: plays loud cash-register chime + native device push
     const unsubRealtimePush = setupSellerOrderRealtime(shop.id, user.uid, () => {
@@ -507,7 +511,21 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
       )}
 
       {/* Tab 3: Orders */}
-      {currentTab === 'orders' && <SellerOrders orders={orders} shop={shop} />}
+      {currentTab === 'orders' && (
+        <SellerOrders
+          orders={orders}
+          shop={shop}
+          onRefresh={() => {
+            fetchSellerOrdersFromSupabase({
+              id: shop.id,
+              shopName: shop.shopName,
+              ownerId: shop.ownerId || user.uid,
+            }).then((fresh) => {
+              if (fresh) setOrders(fresh);
+            });
+          }}
+        />
+      )}
 
       {/* Tab 4: Wallet */}
       {currentTab === 'wallet' && (
