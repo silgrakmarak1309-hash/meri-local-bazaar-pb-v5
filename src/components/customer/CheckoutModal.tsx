@@ -402,7 +402,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         settings,
         dynamicDeliveryFee,
         selectedVillageName || undefined,
-        paymentMethod === 'upi' ? upiUtr.trim() : undefined
+        upiUtr.trim() || undefined
       );
 
       // Unconditionally clear active cart state on order completion

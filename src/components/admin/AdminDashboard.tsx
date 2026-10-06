@@ -1233,7 +1233,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                           ? 'bg-emerald-100 text-emerald-800'
                           : o.orderStatus === 'cancelled'
                           ? 'bg-red-100 text-red-800'
-                          : o.orderStatus === 'pending_verification'
+                          : o.orderStatus === 'pending_verification' || o.orderStatus === 'pending'
                           ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
                           : 'bg-amber-100 text-amber-800'
                       }`}
@@ -1286,7 +1286,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                   ))}
                 </div>
 
-                {o.orderStatus === 'pending_verification' && (
+                {(o.orderStatus === 'pending_verification' || o.orderStatus === 'pending' || o.paymentStatus === 'pending') && (
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
                     <div>
                       <span className="font-bold text-amber-900 block">Payment Verification Pending</span>

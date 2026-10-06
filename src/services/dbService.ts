@@ -228,10 +228,10 @@ export function mapOrderToDb(o: Partial<Order>): any {
   if (o.subtotal !== undefined) data.subtotal = o.subtotal;
   if (o.deliveryCharge !== undefined) data.delivery_charge = o.deliveryCharge;
   if (o.platformFee !== undefined) data.platform_fee = o.platformFee;
-  if (o.paymentMethod !== undefined) data.payment_method = o.paymentMethod;
-  if (o.paymentStatus !== undefined) data.payment_status = o.paymentStatus;
-  if (o.orderStatus !== undefined) data.order_status = o.orderStatus;
-  if (o.transactionId !== undefined) data.transaction_id = o.transactionId;
+  data.payment_method = o.paymentMethod || 'upi';
+  data.payment_status = o.paymentStatus || 'pending';
+  data.order_status = o.orderStatus || 'pending_verification';
+  data.transaction_id = o.transactionId ? String(o.transactionId).trim() : null;
   if (o.deliveryPartnerId !== undefined) data.delivery_partner_id = o.deliveryPartnerId;
   if (o.deliveryPartnerName !== undefined) data.delivery_partner_name = o.deliveryPartnerName;
   if (o.deliveryPartnerPhone !== undefined) data.delivery_partner_phone = o.deliveryPartnerPhone;
@@ -278,8 +278,8 @@ export function mapSellerOrderToDb(so: Partial<SellerOrder>): any {
   if (so.sellerSubtotal !== undefined) data.seller_subtotal = so.sellerSubtotal;
   if (so.commissionAmount !== undefined) data.commission_amount = so.commissionAmount;
   if (so.sellerEarnings !== undefined) data.seller_earnings = so.sellerEarnings;
-  if (so.status !== undefined) data.status = so.status;
-  if (so.transactionId !== undefined) data.transaction_id = so.transactionId;
+  data.status = so.status || 'pending_verification';
+  data.transaction_id = so.transactionId ? String(so.transactionId).trim() : null;
   data.updated_at = new Date().toISOString();
   return data;
 }
@@ -2674,9 +2674,9 @@ export async function createOrder(
 
   const resolvedVillage = deliveryVillage || deliveryAddress.village || undefined;
 
-  const isUpi = paymentMethod === 'upi';
-  const initialOrderStatus: OrderStatus = isUpi ? 'pending_verification' : 'confirmed';
-  const initialPaymentStatus: PaymentStatus = isUpi ? 'pending' : (paymentMethod === 'cod' ? 'pending' : 'paid');
+  const cleanUtr = (transactionId || '').trim();
+  const initialOrderStatus: OrderStatus = 'pending_verification';
+  const initialPaymentStatus: PaymentStatus = 'pending';
 
   const order: Order = {
     id: orderId,
@@ -2693,7 +2693,7 @@ export async function createOrder(
     paymentMethod,
     paymentStatus: initialPaymentStatus,
     orderStatus: initialOrderStatus,
-    transactionId: transactionId || undefined,
+    transactionId: cleanUtr || undefined,
     deliveryOtp: otp,
     items,
     sellerIds,
@@ -2703,9 +2703,9 @@ export async function createOrder(
       {
         status: initialOrderStatus,
         timestamp: new Date().toISOString(),
-        note: isUpi
-          ? `Order placed via UPI. 12-digit UTR: ${transactionId}. Payment verification pending.`
-          : 'Order placed successfully',
+        note: cleanUtr
+          ? `Order placed via UPI. 12-digit UTR: ${cleanUtr}. Payment verification pending.`
+          : 'Order placed. Pending verification.',
       },
     ],
   };
@@ -2713,11 +2713,21 @@ export async function createOrder(
   // 1. Supabase Order Insert
   try {
     const dbPayload = mapOrderToDb(order);
-    const { error: insErr } = await supabase.from('orders').insert(dbPayload);
+    dbPayload.transaction_id = cleanUtr || null;
+    dbPayload.order_status = 'pending_verification';
+    dbPayload.payment_status = 'pending';
+
+    let { error: insErr } = await supabase.from('orders').insert(dbPayload);
     if (insErr) {
-      console.warn('Supabase master order insert error:', insErr);
-      // Fallback: If transaction_id column does not exist yet in Supabase schema cache, retry without it
-      if (insErr.message?.includes('transaction_id') || insErr.code === 'PGRST204') {
+      console.warn('Supabase master order insert initial attempt:', insErr);
+      // Fallback: If Postgres check constraint does not permit 'pending_verification' yet, use 'pending'
+      if (insErr.message?.includes('orders_order_status_check') || insErr.code === '23514') {
+        const adjustedPayload = { ...dbPayload, order_status: 'pending' };
+        const res = await supabase.from('orders').insert(adjustedPayload);
+        insErr = res.error;
+      }
+      // Fallback: If transaction_id column missing in schema cache
+      if (insErr && (insErr.message?.includes('transaction_id') || insErr.code === 'PGRST204')) {
         const fallbackPayload = { ...dbPayload };
         delete fallbackPayload.transaction_id;
         await supabase.from('orders').insert(fallbackPayload);
@@ -2755,8 +2765,8 @@ export async function createOrder(
       order_id: orderId,
       amount: totalAmount,
       method: paymentMethod,
-      status: initialPaymentStatus,
-      reference_id: transactionId || `ref_${Date.now()}`,
+      status: 'pending',
+      reference_id: cleanUtr || `ref_${Date.now()}`,
     });
   } catch (e) {
     console.warn('Supabase payment insert notice:', e);
@@ -2789,7 +2799,7 @@ export async function createOrder(
       commissionAmount: commission,
       sellerEarnings,
       status: initialOrderStatus,
-      transactionId: transactionId || undefined,
+      transactionId: cleanUtr || undefined,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -2797,11 +2807,12 @@ export async function createOrder(
     // Save seller order in Supabase & Firestore
     try {
       const sordPayload = mapSellerOrderToDb(sellerOrder);
-      const { error: sInsErr } = await supabase.from('seller_orders').insert(sordPayload);
-      if (sInsErr && (sInsErr.message?.includes('transaction_id') || sInsErr.code === 'PGRST204')) {
-        const fallbackSord = { ...sordPayload };
-        delete fallbackSord.transaction_id;
-        await supabase.from('seller_orders').insert(fallbackSord);
+      sordPayload.transaction_id = cleanUtr || null;
+      sordPayload.status = 'pending_verification';
+      let { error: sInsErr } = await supabase.from('seller_orders').insert(sordPayload);
+      if (sInsErr && (sInsErr.message?.includes('seller_orders_status_check') || sInsErr.code === '23514')) {
+        const adjustedSord = { ...sordPayload, status: 'pending' };
+        await supabase.from('seller_orders').insert(adjustedSord);
       }
     } catch {}
     try {

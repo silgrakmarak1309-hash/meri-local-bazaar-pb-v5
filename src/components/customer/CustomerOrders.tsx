@@ -69,6 +69,7 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
 
   const getStatusIndex = (currentStatus: OrderStatus) => {
     if (currentStatus === 'cancelled') return -1;
+    if (currentStatus === 'pending' || currentStatus === 'pending_verification') return 0;
     return ORDER_STATUS_STEPS.findIndex((s) => s.status === currentStatus);
   };
 
@@ -76,6 +77,7 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
     switch (status) {
       case 'delivered':
         return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+      case 'pending':
       case 'pending_verification':
         return 'bg-amber-100 text-amber-900 border-amber-300 font-bold animate-pulse';
       case 'cancelled':
@@ -182,7 +184,7 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
                 {isExpanded && (
                   <div className="p-4 sm:p-6 space-y-6">
                     {/* UPI Payment Verification Notice */}
-                    {order.orderStatus === 'pending_verification' && (
+                    {(order.orderStatus === 'pending_verification' || order.orderStatus === 'pending' || order.paymentStatus === 'pending') && order.paymentMethod === 'upi' && order.orderStatus !== 'delivered' && order.orderStatus !== 'cancelled' && (
                       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
                         <div className="p-2 bg-blue-100 text-blue-800 rounded-lg shrink-0 mt-0.5">
                           <Clock className="w-5 h-5" />

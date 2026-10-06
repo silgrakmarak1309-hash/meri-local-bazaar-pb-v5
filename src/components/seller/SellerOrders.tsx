@@ -87,6 +87,7 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefr
     switch (status) {
       case 'delivered':
         return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+      case 'pending':
       case 'pending_verification':
         return 'bg-amber-100 text-amber-900 border-amber-300 font-bold animate-pulse';
       case 'ready_for_pickup':
@@ -222,7 +223,7 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefr
               {/* Workflow Actions */}
               <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
                 <div className="text-[11px] text-slate-500 font-medium">
-                  {order.status === 'pending_verification' && '⏳ Payment Verification: Verify customer UPI UTR in bank statement before processing.'}
+                  {(order.status === 'pending_verification' || order.status === 'pending') && '⏳ Payment Verification: Verify customer UPI UTR in bank statement before processing.'}
                   {order.status === 'confirmed' && 'Action Required: Accept order to begin packing.'}
                   {order.status === 'processing' && 'Packing in progress. Mark packed when items are boxed.'}
                   {order.status === 'packed' && 'Ready to dispatch. Notify delivery partner fleet.'}
@@ -232,7 +233,7 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefr
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {order.status === 'pending_verification' && (
+                  {(order.status === 'pending_verification' || order.status === 'pending') && (
                     <button
                       onClick={() => handleStatusChange(order.id, 'processing')}
                       disabled={updatingId === order.id}
