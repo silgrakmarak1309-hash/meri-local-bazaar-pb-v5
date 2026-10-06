@@ -59,6 +59,7 @@ import {
   deleteCategory,
   listenToAllOrders,
   fetchAllOrdersFromSupabase,
+  updateOrderStatus,
   listenToPayoutRequests,
   updatePayoutStatus,
   updatePlatformSettings,
@@ -1232,6 +1233,8 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                           ? 'bg-emerald-100 text-emerald-800'
                           : o.orderStatus === 'cancelled'
                           ? 'bg-red-100 text-red-800'
+                          : o.orderStatus === 'pending_verification'
+                          ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
                           : 'bg-amber-100 text-amber-800'
                       }`}
                     >
@@ -1255,6 +1258,14 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                     <div className="text-[11px] text-slate-400">
                       Subtotal: ₹{o.subtotal} | Delivery: ₹{o.deliveryCharge} | Fee: ₹{o.platformFee}
                     </div>
+                    {o.transactionId && (
+                      <div className="mt-1">
+                        <span className="text-[10px] text-slate-400 font-bold block">UPI UTR Ref:</span>
+                        <code className="text-xs font-mono font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 inline-block">
+                          {o.transactionId}
+                        </code>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold block">Delivery Rider</span>
@@ -1274,6 +1285,30 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                     </div>
                   ))}
                 </div>
+
+                {o.orderStatus === 'pending_verification' && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div>
+                      <span className="font-bold text-amber-900 block">Payment Verification Pending</span>
+                      <span className="text-amber-800 text-[11px]">
+                        Customer submitted 12-digit UTR:{' '}
+                        <code className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-amber-300 text-blue-900">
+                          {o.transactionId || 'N/A'}
+                        </code>
+                      </span>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        await updateOrderStatus(o.id, 'confirmed', 'paid');
+                        const refreshed = await fetchAllOrdersFromSupabase();
+                        setOrders(refreshed);
+                      }}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-2xs transition cursor-pointer"
+                    >
+                      Verify UTR & Confirm Order ✓
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
             {orders.length === 0 && (

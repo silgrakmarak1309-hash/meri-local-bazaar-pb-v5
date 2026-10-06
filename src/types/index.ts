@@ -122,6 +122,7 @@ export interface CartItem {
 
 export type OrderStatus =
   | 'pending'
+  | 'pending_verification'
   | 'confirmed'
   | 'processing'
   | 'packed'
@@ -162,6 +163,7 @@ export interface Order {
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
   orderStatus: OrderStatus;
+  transactionId?: string;
   deliveryPartnerId?: string;
   deliveryPartnerName?: string;
   deliveryPartnerPhone?: string;
@@ -191,6 +193,7 @@ export interface SellerOrder {
   commissionAmount: number;
   sellerEarnings: number;
   status: OrderStatus;
+  transactionId?: string;
   createdAt: string;
   updatedAt: string;
 }

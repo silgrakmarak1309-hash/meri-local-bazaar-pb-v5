@@ -4,6 +4,7 @@ import {
   MapPin,
   Plus,
   CheckCircle2,
+  CheckCircle,
   CreditCard,
   Smartphone,
   Banknote,
@@ -11,6 +12,8 @@ import {
   Truck,
   ArrowLeft,
   AlertCircle,
+  Lock,
+  Clock,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
@@ -62,6 +65,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [showNewAddressForm, setShowNewAddressForm] = useState<boolean>(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('upi');
   const [copiedUpi, setCopiedUpi] = useState(false);
+  const [hasOpenedUpiApp, setHasOpenedUpiApp] = useState<boolean>(false);
+  const [upiUtr, setUpiUtr] = useState<string>('');
 
   // Hardcoded UPI Details for Greja Marak
   const upiId = 'grejamarak@okaxis';
@@ -372,6 +377,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       }
     }
 
+    // Strict UPI validation check
+    if (paymentMethod === 'upi') {
+      if (!hasOpenedUpiApp) {
+        setErrorMsg("Please click 'Open UPI App' to complete payment first.");
+        return;
+      }
+      if (!/^\d{12}$/.test(upiUtr.trim())) {
+        setErrorMsg('Please enter an exact 12-digit UPI Transaction / UTR number.');
+        return;
+      }
+    }
+
     setLoading(true);
     setErrorMsg(null);
 
@@ -391,7 +408,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         paymentMethod,
         settings,
         dynamicDeliveryFee,
-        selectedVillageName || undefined
+        selectedVillageName || undefined,
+        paymentMethod === 'upi' ? upiUtr.trim() : undefined
       );
 
       // Unconditionally clear active cart state on order completion
@@ -797,20 +815,105 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                         <span className="text-base font-black text-emerald-700">₹{totalAmount.toLocaleString('en-IN')}</span>
                       </div>
 
-                      <div className="pt-1">
+                      <div className="pt-1 flex flex-wrap items-center gap-2">
                         <a
                           href={`upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`BazaarX Order Payment`)}`}
-                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-[#2874f0] hover:bg-blue-700 text-white font-bold rounded-lg text-xs transition shadow-2xs cursor-pointer"
+                          onClick={() => {
+                            setHasOpenedUpiApp(true);
+                          }}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 font-bold rounded-lg text-xs transition shadow-2xs cursor-pointer ${
+                            hasOpenedUpiApp
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                              : 'bg-[#2874f0] hover:bg-blue-700 text-white animate-pulse'
+                          }`}
                         >
                           <Smartphone className="w-3.5 h-3.5" />
-                          <span>Open UPI App (GPay / PhonePe / Paytm)</span>
+                          <span>{hasOpenedUpiApp ? 'UPI App Opened ✓ (Tap to Reopen)' : 'Open UPI App (GPay / PhonePe / Paytm)'}</span>
                         </a>
+
+                        {!hasOpenedUpiApp && (
+                          <button
+                            type="button"
+                            onClick={() => setHasOpenedUpiApp(true)}
+                            className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-[11px] font-semibold transition cursor-pointer"
+                          >
+                            I Scanned QR on another device
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
-                  <p className="text-[11px] text-slate-600 bg-white/90 p-2 rounded-lg border border-blue-100/80">
-                    💡 Click <strong>"Open UPI App"</strong> or scan the QR code to send ₹{totalAmount} to <strong>{upiId}</strong>, then tap <strong>"Confirm Order"</strong> below.
-                  </p>
+
+                  {/* 12-Digit UPI Transaction / UTR Input */}
+                  <div className="pt-3 border-t border-blue-200/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                        <span>UPI Transaction ID / 12-Digit UTR Number</span>
+                        <span className="text-red-500 font-bold">*</span>
+                      </label>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition ${
+                          upiUtr.trim().length === 12
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {upiUtr.trim().length}/12 Digits
+                      </span>
+                    </div>
+
+                    <div className="relative">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={12}
+                        value={upiUtr}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 12);
+                          setUpiUtr(val);
+                        }}
+                        placeholder="Enter 12-digit UTR Number (e.g. 427819203810)"
+                        className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-sm font-mono tracking-wider focus:outline-none transition shadow-2xs ${
+                          upiUtr.trim().length === 12
+                            ? 'border-emerald-500 ring-2 ring-emerald-500/20 text-emerald-950 font-black'
+                            : 'border-slate-300 focus:border-[#2874f0] focus:ring-2 focus:ring-blue-500/20 text-slate-900 font-medium'
+                        }`}
+                      />
+                      {upiUtr.trim().length === 12 && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-600 text-xs font-bold flex items-center gap-1">
+                          <CheckCircle className="w-4 h-4" />
+                          <span>12-Digit Valid</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Step indicator guide */}
+                    {!hasOpenedUpiApp ? (
+                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong>Step 1 Required:</strong> Tap <strong>"Open UPI App"</strong> above (or scan QR) to initiate payment of ₹{totalAmount.toLocaleString('en-IN')}.
+                        </div>
+                      </div>
+                    ) : upiUtr.trim().length !== 12 ? (
+                      <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-[11px] text-blue-900 flex items-start gap-2">
+                        <Clock className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong>Step 2 Required:</strong> After paying, find the <strong>12-digit UTR / UPI Ref Number</strong> in your UPI app receipt and enter it above ({upiUtr.trim().length}/12 digits entered).
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] text-emerald-900 flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>
+                          <strong>Payment Reference Ready!</strong> 12-digit UTR verified. Click <strong>"Confirm Order"</strong> below. Order status will be set to <em>Pending Verification</em>.
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -900,11 +1003,31 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
           <button
             onClick={handlePlaceOrder}
-            disabled={loading || !selectedAddressId}
-            className="min-h-[46px] px-5 sm:px-6 py-2.5 bg-[#fb641b] hover:bg-[#e85b17] text-white font-bold rounded-xl text-xs sm:text-sm shadow-md transition cursor-pointer touch-manipulation active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+            disabled={
+              loading ||
+              !selectedAddressId ||
+              (paymentMethod === 'upi' && (!hasOpenedUpiApp || upiUtr.trim().length !== 12))
+            }
+            className={`min-h-[46px] px-5 sm:px-6 py-2.5 font-bold rounded-xl text-xs sm:text-sm shadow-md transition touch-manipulation active:scale-95 flex items-center justify-center gap-2 ${
+              loading ||
+              !selectedAddressId ||
+              (paymentMethod === 'upi' && (!hasOpenedUpiApp || upiUtr.trim().length !== 12))
+                ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-75'
+                : 'bg-[#fb641b] hover:bg-[#e85b17] text-white cursor-pointer'
+            }`}
           >
             {loading ? (
               <span>Placing Order...</span>
+            ) : paymentMethod === 'upi' && !hasOpenedUpiApp ? (
+              <>
+                <Lock className="w-4 h-4" />
+                <span>Open UPI App to Unlock</span>
+              </>
+            ) : paymentMethod === 'upi' && upiUtr.trim().length !== 12 ? (
+              <>
+                <Lock className="w-4 h-4" />
+                <span>Enter 12-Digit UTR ({upiUtr.trim().length}/12)</span>
+              </>
             ) : (
               <>
                 <span>Confirm Order</span>

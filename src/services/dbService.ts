@@ -27,6 +27,7 @@ import {
   Address,
   OrderItem,
   OrderStatus,
+  PaymentStatus,
   AssignmentStatus,
   PayoutStatus,
   UserProfile,
@@ -201,6 +202,7 @@ export function mapOrderFromDb(row: any): Order {
     paymentMethod: row.payment_method || 'upi',
     paymentStatus: row.payment_status || 'pending',
     orderStatus: row.order_status || 'confirmed',
+    transactionId: row.transaction_id || undefined,
     deliveryPartnerId: row.delivery_partner_id || undefined,
     deliveryPartnerName: row.delivery_partner_name || undefined,
     deliveryPartnerPhone: row.delivery_partner_phone || undefined,
@@ -229,6 +231,7 @@ export function mapOrderToDb(o: Partial<Order>): any {
   if (o.paymentMethod !== undefined) data.payment_method = o.paymentMethod;
   if (o.paymentStatus !== undefined) data.payment_status = o.paymentStatus;
   if (o.orderStatus !== undefined) data.order_status = o.orderStatus;
+  if (o.transactionId !== undefined) data.transaction_id = o.transactionId;
   if (o.deliveryPartnerId !== undefined) data.delivery_partner_id = o.deliveryPartnerId;
   if (o.deliveryPartnerName !== undefined) data.delivery_partner_name = o.deliveryPartnerName;
   if (o.deliveryPartnerPhone !== undefined) data.delivery_partner_phone = o.deliveryPartnerPhone;
@@ -255,6 +258,7 @@ export function mapSellerOrderFromDb(row: any): SellerOrder {
     commissionAmount: Number(row.commission_amount) || 0,
     sellerEarnings: Number(row.seller_earnings) || 0,
     status: row.status || 'confirmed',
+    transactionId: row.transaction_id || undefined,
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || new Date().toISOString(),
   };
@@ -275,6 +279,7 @@ export function mapSellerOrderToDb(so: Partial<SellerOrder>): any {
   if (so.commissionAmount !== undefined) data.commission_amount = so.commissionAmount;
   if (so.sellerEarnings !== undefined) data.seller_earnings = so.sellerEarnings;
   if (so.status !== undefined) data.status = so.status;
+  if (so.transactionId !== undefined) data.transaction_id = so.transactionId;
   data.updated_at = new Date().toISOString();
   return data;
 }
@@ -2588,7 +2593,8 @@ export async function createOrder(
   paymentMethod: Order['paymentMethod'],
   settings: PlatformSettings,
   customDeliveryCharge?: number,
-  deliveryVillage?: string
+  deliveryVillage?: string,
+  transactionId?: string
 ): Promise<Order> {
   const orderId = 'ORD-' + Date.now().toString().slice(-6) + '-' + Math.floor(100 + Math.random() * 900);
   const otp = generateDeliveryOTP();
@@ -2668,6 +2674,10 @@ export async function createOrder(
 
   const resolvedVillage = deliveryVillage || deliveryAddress.village || undefined;
 
+  const isUpi = paymentMethod === 'upi';
+  const initialOrderStatus: OrderStatus = isUpi ? 'pending_verification' : 'confirmed';
+  const initialPaymentStatus: PaymentStatus = isUpi ? 'pending' : (paymentMethod === 'cod' ? 'pending' : 'paid');
+
   const order: Order = {
     id: orderId,
     customerId,
@@ -2681,8 +2691,9 @@ export async function createOrder(
     deliveryCharge,
     platformFee,
     paymentMethod,
-    paymentStatus: paymentMethod === 'cod' ? 'pending' : 'paid',
-    orderStatus: 'confirmed',
+    paymentStatus: initialPaymentStatus,
+    orderStatus: initialOrderStatus,
+    transactionId: transactionId || undefined,
     deliveryOtp: otp,
     items,
     sellerIds,
@@ -2690,16 +2701,28 @@ export async function createOrder(
     updatedAt: new Date().toISOString(),
     statusHistory: [
       {
-        status: 'confirmed',
+        status: initialOrderStatus,
         timestamp: new Date().toISOString(),
-        note: 'Order placed successfully',
+        note: isUpi
+          ? `Order placed via UPI. 12-digit UTR: ${transactionId}. Payment verification pending.`
+          : 'Order placed successfully',
       },
     ],
   };
 
   // 1. Supabase Order Insert
   try {
-    await supabase.from('orders').insert(mapOrderToDb(order));
+    const dbPayload = mapOrderToDb(order);
+    const { error: insErr } = await supabase.from('orders').insert(dbPayload);
+    if (insErr) {
+      console.warn('Supabase master order insert error:', insErr);
+      // Fallback: If transaction_id column does not exist yet in Supabase schema cache, retry without it
+      if (insErr.message?.includes('transaction_id') || insErr.code === 'PGRST204') {
+        const fallbackPayload = { ...dbPayload };
+        delete fallbackPayload.transaction_id;
+        await supabase.from('orders').insert(fallbackPayload);
+      }
+    }
   } catch (e) {
     console.warn('Supabase master order insert notice:', e);
   }
@@ -2732,8 +2755,8 @@ export async function createOrder(
       order_id: orderId,
       amount: totalAmount,
       method: paymentMethod,
-      status: paymentMethod === 'cod' ? 'pending' : 'paid',
-      reference_id: `ref_${Date.now()}`,
+      status: initialPaymentStatus,
+      reference_id: transactionId || `ref_${Date.now()}`,
     });
   } catch (e) {
     console.warn('Supabase payment insert notice:', e);
@@ -2765,14 +2788,21 @@ export async function createOrder(
       sellerSubtotal,
       commissionAmount: commission,
       sellerEarnings,
-      status: 'confirmed',
+      status: initialOrderStatus,
+      transactionId: transactionId || undefined,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
     // Save seller order in Supabase & Firestore
     try {
-      await supabase.from('seller_orders').insert(mapSellerOrderToDb(sellerOrder));
+      const sordPayload = mapSellerOrderToDb(sellerOrder);
+      const { error: sInsErr } = await supabase.from('seller_orders').insert(sordPayload);
+      if (sInsErr && (sInsErr.message?.includes('transaction_id') || sInsErr.code === 'PGRST204')) {
+        const fallbackSord = { ...sordPayload };
+        delete fallbackSord.transaction_id;
+        await supabase.from('seller_orders').insert(fallbackSord);
+      }
     } catch {}
     try {
       await setDoc(doc(db, 'seller_orders', sellerOrderId), sellerOrder);
@@ -2899,6 +2929,29 @@ export async function updateSellerOrderStatus(
       if (shopDetails?.shopPhone) assignmentUpdates.shop_phone = shopDetails.shopPhone;
       await supabase.from('delivery_assignments').update(assignmentUpdates).eq('seller_order_id', sellerOrderId);
     }
+  } catch {}
+}
+
+export async function updateOrderStatus(
+  orderId: string,
+  newStatus: OrderStatus,
+  paymentStatus?: PaymentStatus
+) {
+  const now = new Date().toISOString();
+  const updatePayload: any = { order_status: newStatus, updated_at: now };
+  if (paymentStatus) {
+    updatePayload.payment_status = paymentStatus;
+  }
+  try {
+    await supabase.from('orders').update(updatePayload).eq('id', orderId);
+  } catch {}
+  try {
+    const sOrdersUpdate: any = { status: newStatus, updated_at: now };
+    await supabase.from('seller_orders').update(sOrdersUpdate).eq('order_id', orderId);
+  } catch {}
+  try {
+    const ordRef = doc(db, 'orders', orderId);
+    await updateDoc(ordRef, updatePayload);
   } catch {}
 }
 

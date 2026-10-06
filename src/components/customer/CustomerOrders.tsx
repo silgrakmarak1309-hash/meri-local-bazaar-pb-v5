@@ -23,6 +23,7 @@ interface CustomerOrdersProps {
 }
 
 const ORDER_STATUS_STEPS: { status: OrderStatus; label: string; icon: string }[] = [
+  { status: 'pending_verification', label: 'Payment Verification', icon: '⏳' },
   { status: 'confirmed', label: 'Confirmed', icon: '📝' },
   { status: 'processing', label: 'Processing', icon: '⚙️' },
   { status: 'packed', label: 'Packed', icon: '📦' },
@@ -75,6 +76,8 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
     switch (status) {
       case 'delivered':
         return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+      case 'pending_verification':
+        return 'bg-amber-100 text-amber-900 border-amber-300 font-bold animate-pulse';
       case 'cancelled':
         return 'bg-red-100 text-red-800 border-red-300';
       case 'out_for_delivery':
@@ -140,10 +143,22 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
                       >
                         {order.orderStatus.replace(/_/g, ' ')}
                       </span>
+                      {order.transactionId && (
+                        <span className="hidden sm:inline-flex text-[10px] font-mono font-bold bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200">
+                          UTR: {order.transactionId}
+                        </span>
+                      )}
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      Placed on {new Date(order.createdAt).toLocaleDateString()} at{' '}
-                      {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
+                      <span>
+                        Placed on {new Date(order.createdAt).toLocaleDateString()} at{' '}
+                        {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      {order.transactionId && (
+                        <span className="sm:hidden text-[10px] font-mono font-bold bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200">
+                          UTR: {order.transactionId}
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -166,6 +181,27 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
                 {/* Expanded Details & Live Tracker */}
                 {isExpanded && (
                   <div className="p-4 sm:p-6 space-y-6">
+                    {/* UPI Payment Verification Notice */}
+                    {order.orderStatus === 'pending_verification' && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
+                        <div className="p-2 bg-blue-100 text-blue-800 rounded-lg shrink-0 mt-0.5">
+                          <Clock className="w-5 h-5" />
+                        </div>
+                        <div className="space-y-1 text-xs text-blue-900">
+                          <h4 className="font-extrabold text-blue-950 text-sm">
+                            UPI Payment Verification in Progress
+                          </h4>
+                          <p className="text-slate-600">
+                            We have received your 12-digit UPI Transaction / UTR number:{' '}
+                            <strong className="font-mono bg-white px-2 py-0.5 rounded border border-blue-200 text-blue-900">
+                              {order.transactionId || 'Submitted'}
+                            </strong>
+                            . The store is verifying the transaction. Once verified, fulfillment starts immediately!
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Delivery OTP Security Banner (Critical Feature) */}
                     {order.orderStatus !== 'delivered' && order.orderStatus !== 'cancelled' && (
                       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
