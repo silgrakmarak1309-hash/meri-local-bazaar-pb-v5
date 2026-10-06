@@ -416,14 +416,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         }
       } catch {}
 
-      // Trigger UPI app intent deep link if UPI method chosen
-      if (paymentMethod === 'upi') {
-        const upiDeepLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`BazaarX Order ${order.id}`)}`;
-        try {
-          window.location.href = upiDeepLink;
-        } catch {}
-      }
-
       onOrderSuccess(order);
       onClose();
     } catch (err: any) {
