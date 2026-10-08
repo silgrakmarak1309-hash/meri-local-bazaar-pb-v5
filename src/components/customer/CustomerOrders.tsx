@@ -16,6 +16,7 @@ import {
 import { Order, OrderStatus } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { fetchCustomerOrdersFromSupabase } from '../../services/dbService';
+import { supabase } from '../../supabase';
 
 interface CustomerOrdersProps {
   orders: Order[];
@@ -61,6 +62,19 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ orders, onRefres
 
   useEffect(() => {
     loadOrdersDirectly();
+
+    // Supabase Realtime Listener on public.orders table so status timeline bubble updates live without refresh
+    const channelId = `realtime:customer_my_orders_${user?.uid || 'guest'}_${Date.now()}`;
+    const channel = supabase
+      .channel(channelId)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        loadOrdersDirectly();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user?.uid, user?.email, user?.phoneNumber]);
 
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(

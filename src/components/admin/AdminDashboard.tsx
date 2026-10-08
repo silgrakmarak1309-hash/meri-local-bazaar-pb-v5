@@ -30,6 +30,8 @@ import {
   ChevronRight,
   Search,
   CheckCheck,
+  X,
+  AlertCircle,
 } from 'lucide-react';
 import {
   Shop,
@@ -60,6 +62,8 @@ import {
   listenToAllOrders,
   fetchAllOrdersFromSupabase,
   updateOrderStatus,
+  verifyOrderPayment,
+  rejectOrderPayment,
   listenToPayoutRequests,
   updatePayoutStatus,
   updatePlatformSettings,
@@ -115,6 +119,7 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
 
   // UI state
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [orderFilter, setOrderFilter] = useState<'all' | 'pending_verification' | 'active' | 'delivered' | 'cancelled'>('all');
   const [txRefInput, setTxRefInput] = useState<Record<string, string>>({});
   const [adminNotesInput, setAdminNotesInput] = useState<Record<string, string>>({});
   const [seedStatus, setSeedStatus] = useState<string | null>(null);
@@ -259,6 +264,35 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
     try {
       await deleteShop(shopId);
       setShops((prev) => prev.filter((s) => s.id !== shopId));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Payment Verification & Order Management Handlers
+  const handleVerifyPayment = async (orderId: string) => {
+    setActionLoading(`verify_${orderId}`);
+    try {
+      await verifyOrderPayment(orderId);
+      const refreshed = await fetchAllOrdersFromSupabase();
+      if (refreshed) setOrders(refreshed);
+    } catch (e) {
+      console.error('Failed to verify order payment:', e);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRejectPayment = async (orderId: string) => {
+    const reason = prompt('Please specify rejection reason for customer and seller records:', 'Invalid or fake 12-digit UPI UTR number');
+    if (!reason) return;
+    setActionLoading(`reject_${orderId}`);
+    try {
+      await rejectOrderPayment(orderId, reason);
+      const refreshed = await fetchAllOrdersFromSupabase();
+      if (refreshed) setOrders(refreshed);
+    } catch (e) {
+      console.error('Failed to reject order payment:', e);
     } finally {
       setActionLoading(null);
     }
@@ -1196,10 +1230,14 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
       {/* ========================================================== */}
       {activeTab === 'orders' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-extrabold text-slate-900">All Marketplace Orders ({orders.length})</h2>
-              <p className="text-xs text-slate-500">Live global stream across all marketplace vendors</p>
+              <h2 className="text-base font-extrabold text-slate-900">
+                Master Customer Orders Feed ({orders.length})
+              </h2>
+              <p className="text-xs text-slate-500">
+                Live multi-vendor platform orders, delivery routing status, and UPI UTR payment verification
+              </p>
             </div>
             <button
               onClick={() => {
@@ -1213,8 +1251,70 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
               <span>Refresh Feed</span>
             </button>
           </div>
+
+          {/* Quick Filter Tabs for Orders */}
+          <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-100 rounded-xl text-xs">
+            <button
+              onClick={() => setOrderFilter('all')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+                orderFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              All Orders ({orders.length})
+            </button>
+            <button
+              onClick={() => setOrderFilter('pending_verification')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                orderFilter === 'pending_verification'
+                  ? 'bg-amber-500 text-slate-950 shadow-2xs'
+                  : 'text-amber-800 hover:text-amber-950'
+              }`}
+            >
+              <span>⏳ Pending Verification</span>
+              <span className="px-1.5 py-0.5 bg-white/90 text-slate-900 rounded-full text-[10px] font-black">
+                {orders.filter((o) => o.orderStatus === 'pending_verification' || o.orderStatus === 'pending' || o.paymentStatus === 'pending').length}
+              </span>
+            </button>
+            <button
+              onClick={() => setOrderFilter('active')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+                orderFilter === 'active' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Confirmed & Active ({orders.filter((o) => o.orderStatus === 'confirmed' || o.orderStatus === 'processing' || o.orderStatus === 'packed' || o.orderStatus === 'ready_for_pickup' || o.orderStatus === 'picked_up' || o.orderStatus === 'out_for_delivery').length})
+            </button>
+            <button
+              onClick={() => setOrderFilter('delivered')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+                orderFilter === 'delivered' ? 'bg-white text-emerald-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Delivered ({orders.filter((o) => o.orderStatus === 'delivered').length})
+            </button>
+            <button
+              onClick={() => setOrderFilter('cancelled')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+                orderFilter === 'cancelled' ? 'bg-white text-red-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Cancelled ({orders.filter((o) => o.orderStatus === 'cancelled').length})
+            </button>
+          </div>
+
           <div className="space-y-3">
-            {orders.map((o) => (
+            {orders
+              .filter((o) => {
+                if (orderFilter === 'pending_verification') {
+                  return o.orderStatus === 'pending_verification' || o.orderStatus === 'pending' || o.paymentStatus === 'pending';
+                }
+                if (orderFilter === 'active') {
+                  return o.orderStatus === 'confirmed' || o.orderStatus === 'processing' || o.orderStatus === 'packed' || o.orderStatus === 'ready_for_pickup' || o.orderStatus === 'picked_up' || o.orderStatus === 'out_for_delivery';
+                }
+                if (orderFilter === 'delivered') return o.orderStatus === 'delivered';
+                if (orderFilter === 'cancelled') return o.orderStatus === 'cancelled';
+                return true;
+              })
+              .map((o) => (
               <div key={o.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5 text-xs">
                   <div>
@@ -1287,26 +1387,48 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                 </div>
 
                 {(o.orderStatus === 'pending_verification' || o.orderStatus === 'pending' || o.paymentStatus === 'pending') && (
-                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div>
-                      <span className="font-bold text-amber-900 block">Payment Verification Pending</span>
-                      <span className="text-amber-800 text-[11px]">
+                  <div className="p-3.5 bg-linear-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-amber-950 flex items-center gap-1.5 text-sm">
+                          <AlertCircle className="w-4 h-4 text-amber-600 animate-pulse" />
+                          Payment Verification Pending
+                        </span>
+                        <span className="bg-amber-200 text-amber-900 font-extrabold px-2 py-0.5 rounded text-[10px] uppercase">
+                          Action Required
+                        </span>
+                      </div>
+                      <div className="text-amber-900 text-xs">
                         Customer submitted 12-digit UTR:{' '}
-                        <code className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-amber-300 text-blue-900">
+                        <code className="font-mono font-black text-sm bg-white px-2 py-0.5 rounded border border-amber-400 text-blue-900 shadow-2xs inline-block">
                           {o.transactionId || 'N/A'}
                         </code>
-                      </span>
+                      </div>
+                      <p className="text-[11px] text-amber-800">
+                        Check your bank statement or UPI merchant app for credit of <strong>₹{o.totalAmount}</strong>.
+                      </p>
                     </div>
-                    <button
-                      onClick={async () => {
-                        await updateOrderStatus(o.id, 'confirmed', 'paid');
-                        const refreshed = await fetchAllOrdersFromSupabase();
-                        setOrders(refreshed);
-                      }}
-                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-2xs transition cursor-pointer"
-                    >
-                      Verify UTR & Confirm Order ✓
-                    </button>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleRejectPayment(o.id)}
+                        disabled={actionLoading === `reject_${o.id}` || actionLoading === `verify_${o.id}`}
+                        className="px-3.5 py-2 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 hover:border-rose-400 font-bold text-xs rounded-xl shadow-2xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        title="Reject payment and mark order cancelled"
+                      >
+                        <X className="w-4 h-4 text-rose-600" />
+                        <span>{actionLoading === `reject_${o.id}` ? 'Rejecting...' : 'Reject (Fake UTR)'}</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleVerifyPayment(o.id)}
+                        disabled={actionLoading === `verify_${o.id}` || actionLoading === `reject_${o.id}`}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer disabled:opacity-50 active:scale-95"
+                      >
+                        <CheckCircle className="w-4 h-4 text-emerald-200" />
+                        <span>{actionLoading === `verify_${o.id}` ? 'Verifying & Syncing...' : 'Verify Payment & Confirm ✓'}</span>
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

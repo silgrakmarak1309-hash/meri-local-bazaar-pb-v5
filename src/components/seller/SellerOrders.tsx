@@ -9,9 +9,11 @@ import {
   AlertCircle,
   ArrowRight,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { SellerOrder, OrderStatus, Shop } from '../../types';
 import { updateSellerOrderStatus, fetchSellerOrdersFromSupabase } from '../../services/dbService';
+import { supabase } from '../../supabase';
 
 interface SellerOrdersProps {
   orders: SellerOrder[];
@@ -23,18 +25,38 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefr
   const [localOrders, setLocalOrders] = useState<SellerOrder[]>(orders);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'new_orders' | 'in_progress' | 'ready' | 'delivered'>('all');
 
   useEffect(() => {
-    // Immediately fetch orders from Supabase on mount
-    fetchSellerOrdersFromSupabase({
+    const targetShop = {
       id: shop?.id || 'shop_1791092440747',
       shopName: shop?.shopName || 'Marak shop',
       ownerId: shop?.ownerId,
-    }).then((fresh) => {
-      if (fresh && fresh.length > 0) {
+    };
+
+    const loadOrders = async () => {
+      const fresh = await fetchSellerOrdersFromSupabase(targetShop);
+      if (fresh) {
         setLocalOrders(fresh);
       }
-    });
+    };
+
+    loadOrders();
+
+    // Setup Supabase Realtime channel for instant order reflection on confirmation
+    const channel = supabase
+      .channel(`realtime:seller_orders_${shop?.id || 'global'}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        loadOrders();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seller_orders' }, () => {
+        loadOrders();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [shop?.id, shop?.shopName]);
 
   useEffect(() => {
@@ -90,6 +112,8 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefr
       case 'pending':
       case 'pending_verification':
         return 'bg-amber-100 text-amber-900 border-amber-300 font-bold animate-pulse';
+      case 'confirmed':
+        return 'bg-emerald-100 text-emerald-900 border-emerald-400 font-bold';
       case 'ready_for_pickup':
         return 'bg-purple-100 text-purple-800 border-purple-300 animate-pulse';
       case 'packed':
@@ -106,9 +130,22 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefr
     }
   };
 
+  const newOrdersCount = localOrders.filter((o) => o.status === 'confirmed').length;
+  const inProgressCount = localOrders.filter((o) => o.status === 'processing' || o.status === 'packed').length;
+  const readyCount = localOrders.filter((o) => o.status === 'ready_for_pickup' || o.status === 'picked_up' || o.status === 'out_for_delivery').length;
+  const deliveredCount = localOrders.filter((o) => o.status === 'delivered').length;
+
+  const filteredOrders = localOrders.filter((o) => {
+    if (statusFilter === 'new_orders') return o.status === 'confirmed';
+    if (statusFilter === 'in_progress') return o.status === 'processing' || o.status === 'packed';
+    if (statusFilter === 'ready') return o.status === 'ready_for_pickup' || o.status === 'picked_up' || o.status === 'out_for_delivery';
+    if (statusFilter === 'delivered') return o.status === 'delivered';
+    return true;
+  });
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-base sm:text-lg font-black text-slate-900">
             Order Fulfillment Center ({localOrders.length})
@@ -123,21 +160,72 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefr
           className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-50"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
-          <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+          <span>{isRefreshing ? 'Refreshing...' : 'Refresh Orders'}</span>
         </button>
       </div>
 
-      {localOrders.length === 0 ? (
+      {/* Filter Tabs for Quick Processing */}
+      <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-100 rounded-xl text-xs">
+        <button
+          onClick={() => setStatusFilter('all')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+            statusFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          All Orders ({localOrders.length})
+        </button>
+        <button
+          onClick={() => setStatusFilter('new_orders')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
+            statusFilter === 'new_orders'
+              ? 'bg-emerald-600 text-white shadow-2xs'
+              : 'text-emerald-800 hover:text-emerald-950'
+          }`}
+        >
+          <span>⚡ New Orders (Awaiting Preparation)</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${statusFilter === 'new_orders' ? 'bg-white text-emerald-900' : 'bg-emerald-100 text-emerald-900'}`}>
+            {newOrdersCount}
+          </span>
+        </button>
+        <button
+          onClick={() => setStatusFilter('in_progress')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+            statusFilter === 'in_progress' ? 'bg-white text-blue-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          Packing & In Progress ({inProgressCount})
+        </button>
+        <button
+          onClick={() => setStatusFilter('ready')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+            statusFilter === 'ready' ? 'bg-white text-purple-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          Ready for Pickup ({readyCount})
+        </button>
+        <button
+          onClick={() => setStatusFilter('delivered')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+            statusFilter === 'delivered' ? 'bg-white text-emerald-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          Delivered ({deliveredCount})
+        </button>
+      </div>
+
+      {filteredOrders.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-200 p-8 text-center shadow-2xs">
           <Package className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-          <h3 className="font-bold text-slate-800 text-sm">No Orders to Fulfill Yet</h3>
+          <h3 className="font-bold text-slate-800 text-sm">No Orders in this Category</h3>
           <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
-            When customers purchase products from your shop, their orders appear here for fulfillment.
+            {statusFilter === 'new_orders'
+              ? 'No new confirmed orders awaiting preparation right now.'
+              : 'When customers purchase products from your shop, their orders appear here for fulfillment.'}
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {localOrders.map((order) => (
+          {filteredOrders.map((order) => (
             <div
               key={order.id}
               className="bg-white rounded-xl border border-slate-200 shadow-2xs p-4 space-y-3 transition"
@@ -248,9 +336,10 @@ export const SellerOrders: React.FC<SellerOrdersProps> = ({ orders, shop, onRefr
                     <button
                       onClick={() => handleStatusChange(order.id, 'processing')}
                       disabled={updatingId === order.id}
-                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-2xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95 animate-bounce-subtle"
                     >
-                      <span>Accept & Process</span>
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
+                      <span>Accept & Start Preparation 📦</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   )}

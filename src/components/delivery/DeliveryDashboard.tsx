@@ -16,6 +16,8 @@ import {
   ShieldCheck,
   Bell,
   Volume2,
+  RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -39,6 +41,7 @@ import {
   listenToWalletTransactions,
   listenToUserPayouts,
   requestPayout,
+  fetchPartnerDeliveriesFromSupabase,
 } from '../../services/dbService';
 import {
   setupDeliveryPartnerRealtime,
@@ -71,6 +74,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
   const [enteredOtp, setEnteredOtp] = useState<Record<string, string>>({});
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [otpError, setOtpError] = useState<{ id: string; msg: string } | null>(null);
+  const [isRefreshingFeed, setIsRefreshingFeed] = useState(false);
 
   // Payout Form
   const [payoutAmount, setPayoutAmount] = useState<number>(settings.minPayoutAmount);
@@ -145,22 +149,38 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
     setNotifPermission(getNotificationPermission());
   }, []);
 
+  const handleRefreshFeed = async () => {
+    setIsRefreshingFeed(true);
+    try {
+      const partnerKey = partner?.id || user?.uid || '';
+      const list = await fetchPartnerDeliveriesFromSupabase(partnerKey);
+      if (list) {
+        setAssignments(list);
+      }
+    } catch (e) {
+      console.warn('Delivery feed refresh notice:', e);
+    } finally {
+      setIsRefreshingFeed(false);
+    }
+  };
+
   useEffect(() => {
     if (!user) return;
-    const unsubDeliveries = listenToPartnerDeliveries(user.uid, (list) => {
+    const partnerKey = partner?.id || user.uid;
+    const unsubDeliveries = listenToPartnerDeliveries(partnerKey, (list) => {
       setAssignments(list);
     });
 
     // Supabase Realtime channel for instant dispatch sirens & push alerts on order assignment
-    const unsubRealtimePush = setupDeliveryPartnerRealtime(user.uid, () => {
-      // Assignments updated automatically via listener
+    const unsubRealtimePush = setupDeliveryPartnerRealtime(partnerKey, () => {
+      handleRefreshFeed();
     });
 
     return () => {
       unsubDeliveries();
       unsubRealtimePush();
     };
-  }, [user?.uid]);
+  }, [user?.uid, partner?.id]);
 
   const handleEnablePush = async () => {
     const res = await requestNotificationPermission();
@@ -314,11 +334,11 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
   const availableAssignments = assignments.filter((a) => a.status === 'available');
   const activeAssignments = assignments.filter(
     (a) =>
-      a.deliveryPartnerId === partner.id &&
+      (a.deliveryPartnerId === partner?.id || a.deliveryPartnerId === user?.uid) &&
       (a.status === 'assigned' || a.status === 'picked_up' || a.status === 'out_for_delivery')
   );
   const completedAssignments = assignments.filter(
-    (a) => a.deliveryPartnerId === partner.id && a.status === 'delivered'
+    (a) => (a.deliveryPartnerId === partner?.id || a.deliveryPartnerId === user?.uid) && a.status === 'delivered'
   );
 
   return (
@@ -424,7 +444,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Available Orders ({availableAssignments.length})
+          Awaiting Acceptance ({availableAssignments.length})
         </button>
         <button
           onClick={() => setTab('deliveries')}
@@ -461,21 +481,31 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
       {/* Tab 1: Available Orders for Pickup */}
       {currentTab === 'home' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm sm:text-base font-bold text-slate-800">
-              Orders Ready for Pickup
-            </h2>
-            <span className="text-xs text-slate-500 font-medium">
-              Earning: ₹{settings.deliveryPartnerEarningPerOrder} per delivery
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm sm:text-base font-bold text-slate-800">
+                Awaiting Acceptance / Pending Pickup ({availableAssignments.length})
+              </h2>
+              <span className="text-xs text-slate-500 font-medium">
+                Earning: Based on distance/village (Dynamic per order) • Deliver with 4-digit Customer OTP
+              </span>
+            </div>
+            <button
+              onClick={handleRefreshFeed}
+              disabled={isRefreshingFeed}
+              className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingFeed ? 'animate-spin text-amber-600' : ''}`} />
+              <span>{isRefreshingFeed ? 'Refreshing...' : 'Refresh Feed'}</span>
+            </button>
           </div>
 
           {availableAssignments.length === 0 ? (
             <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-xs shadow-2xs">
               <Package className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-              <p className="font-bold text-slate-700 text-sm">No Available Orders Right Now</p>
+              <p className="font-bold text-slate-700 text-sm">No Orders Awaiting Acceptance Right Now</p>
               <p className="text-slate-400 mt-1 max-w-sm mx-auto">
-                Orders ready for pickup from local shops will appear here in real time. Keep the app open!
+                Orders confirmed by Admin will automatically appear here in live real-time. Keep the dashboard open!
               </p>
             </div>
           ) : (
@@ -486,9 +516,19 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                   className="bg-white border-2 border-amber-200 rounded-xl p-4 shadow-sm space-y-3"
                 >
                   <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                    <span className="text-xs font-bold text-slate-800">Order #{assign.orderId}</span>
-                    <span className="text-xs font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                      Earn ₹{assign.earningAmount}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-slate-800">Order #{assign.orderId}</span>
+                      {assign.deliveryAddress?.village && (
+                        <span className="text-[10px] bg-amber-50 text-amber-900 font-bold px-1.5 py-0.5 rounded border border-amber-200">
+                          📍 {assign.deliveryAddress.village}
+                        </span>
+                      )}
+                      <span className="text-[10px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded border border-slate-200 flex items-center gap-1">
+                        🔒 Customer OTP Required on Delivery
+                      </span>
+                    </div>
+                    <span className="text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 shrink-0">
+                      Earn ₹{assign.earningAmount || assign.deliveryFee || 20}
                     </span>
                   </div>
 
@@ -567,8 +607,9 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                     </div>
 
                     <div className="text-right">
-                      <div className="text-xs text-slate-500 font-medium">Delivery Payout</div>
-                      <div className="text-base font-black text-emerald-700">₹{task.earningAmount}</div>
+                      <div className="text-xs text-slate-500 font-medium">Dynamic Payout</div>
+                      <div className="text-base font-black text-emerald-700">₹{task.earningAmount || task.deliveryFee || 20}</div>
+                      <span className="text-[10px] text-slate-400 block font-medium">Auto-credited on OTP verify</span>
                     </div>
                   </div>
 
@@ -665,21 +706,21 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                       <input
                         type="text"
                         maxLength={4}
-                        placeholder="4-digit OTP"
+                        placeholder="Enter 4-Digit Customer OTP"
                         value={enteredOtp[task.id] || ''}
                         onChange={(e) =>
                           setEnteredOtp({ ...enteredOtp, [task.id]: e.target.value.replace(/\D/g, '') })
                         }
-                        className="w-full sm:w-36 min-h-[44px] p-2.5 bg-white border border-emerald-300 rounded-xl text-center font-black text-lg tracking-widest outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full sm:w-56 min-h-[44px] p-2.5 bg-white border border-emerald-300 rounded-xl text-center font-black text-lg tracking-widest outline-none focus:ring-2 focus:ring-emerald-500 placeholder:text-slate-400 placeholder:text-xs placeholder:font-medium placeholder:tracking-normal"
                       />
 
                       <button
                         onClick={() => handleVerifyOtpAndDeliver(task.id)}
                         disabled={actionLoading === task.id}
-                        className="w-full sm:flex-1 min-h-[44px] py-2.5 px-4 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs sm:text-sm rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation active:scale-95 disabled:opacity-50"
+                        className="w-full sm:flex-1 min-h-[44px] py-2.5 px-4 bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation active:scale-95 disabled:opacity-50"
                       >
                         <CheckCircle className="w-4 h-4" />
-                        <span>{actionLoading === task.id ? 'Verifying...' : 'Confirm Delivery'}</span>
+                        <span>{actionLoading === task.id ? 'Verifying...' : 'Verify OTP & Complete Delivery ✓'}</span>
                       </button>
                     </div>
                   </div>
@@ -855,7 +896,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                   </div>
 
                   <div className="text-right">
-                    <span className="text-sm font-black text-emerald-700">+₹{task.earningAmount}</span>
+                    <span className="text-sm font-black text-emerald-700">+₹{task.earningAmount || task.deliveryFee || 20}</span>
                     <span className="text-[10px] text-slate-400 block">Credited to Wallet</span>
                   </div>
                 </div>

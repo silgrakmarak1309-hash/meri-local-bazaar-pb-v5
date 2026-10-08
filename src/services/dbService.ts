@@ -2450,13 +2450,9 @@ export function listenToDeliveryAssignments(callback: (assignments: DeliveryAssi
 export function listenToPartnerDeliveries(partnerId: string, callback: (assignments: DeliveryAssignment[]) => void) {
   const fetchPartner = async () => {
     try {
-      const { data, error } = await supabase
-        .from('delivery_assignments')
-        .select('*')
-        .or(`delivery_partner_id.eq.${partnerId},status.eq.available`)
-        .order('created_at', { ascending: false });
-      if (!error && data) {
-        callback(data.map(mapAssignmentFromDb));
+      const list = await fetchPartnerDeliveriesFromSupabase(partnerId);
+      if (list && list.length > 0) {
+        callback(list);
         return;
       }
     } catch {}
@@ -2544,6 +2540,7 @@ export async function reassignDeliveryPartner(assignmentId: string, partner: Del
 
   // 1. Supabase update
   try {
+    const { data: asgn } = await supabase.from('delivery_assignments').select('order_id').eq('id', assignmentId).single();
     await supabase.from('delivery_assignments').update({
       status: 'assigned',
       delivery_partner_id: partner.id,
@@ -2551,6 +2548,16 @@ export async function reassignDeliveryPartner(assignmentId: string, partner: Del
       delivery_partner_phone: partner.phoneNumber,
       updated_at: now,
     }).eq('id', assignmentId);
+
+    // Save assigned rider directly in orders table
+    if (asgn?.order_id) {
+      await supabase.from('orders').update({
+        delivery_partner_id: partner.id,
+        delivery_partner_name: partner.fullName,
+        delivery_partner_phone: partner.phoneNumber,
+        updated_at: now,
+      }).eq('id', asgn.order_id);
+    }
   } catch {}
 
   // 2. Firestore mirror
@@ -2843,8 +2850,8 @@ export async function createOrder(
       customerName,
       customerPhone,
       deliveryAddress,
-      deliveryFee: settings.deliveryBaseCharge,
-      earningAmount: settings.deliveryPartnerEarningPerOrder,
+      deliveryFee: deliveryCharge,
+      earningAmount: deliveryCharge,
       status: 'available',
       otp,
       createdAt: new Date().toISOString(),
@@ -2961,14 +2968,237 @@ export async function updateOrderStatus(
     await supabase.from('seller_orders').update(sOrdersUpdate).eq('order_id', orderId);
   } catch {}
   try {
+    if (newStatus === 'confirmed') {
+      await supabase.from('delivery_assignments').update({ status: 'available', updated_at: now }).eq('order_id', orderId);
+    } else if (newStatus === 'cancelled') {
+      await supabase.from('delivery_assignments').update({ status: 'cancelled', updated_at: now }).eq('order_id', orderId);
+    }
+  } catch {}
+  try {
     const ordRef = doc(db, 'orders', orderId);
     await updateDoc(ordRef, updatePayload);
   } catch {}
 }
 
+export async function verifyOrderPayment(orderId: string) {
+  const now = new Date().toISOString();
+
+  // 1. Fetch current order to ensure we have latest details
+  let orderData: any = null;
+  try {
+    const { data } = await supabase.from('orders').select('*').eq('id', orderId).single();
+    orderData = data;
+  } catch {}
+
+  const currentHistory = Array.isArray(orderData?.status_history) ? orderData.status_history : [];
+  const updatedHistory = [
+    ...currentHistory,
+    { status: 'confirmed', timestamp: now, note: 'Payment verified by Admin (Partner Hub). Order confirmed & dispatched to shop.' }
+  ];
+
+  // 2. Update master public.orders table
+  try {
+    await supabase.from('orders').update({
+      order_status: 'confirmed',
+      payment_status: 'paid',
+      status_history: updatedHistory,
+      updated_at: now,
+    }).eq('id', orderId);
+  } catch (err) {
+    console.warn('verifyOrderPayment orders update error:', err);
+  }
+
+  // 3. Update public.seller_orders table
+  try {
+    await supabase.from('seller_orders').update({
+      status: 'confirmed',
+      updated_at: now,
+    }).eq('order_id', orderId);
+  } catch (err) {
+    console.warn('verifyOrderPayment seller_orders update error:', err);
+  }
+
+  // 4. Ensure delivery_assignments in Supabase has status 'available' so delivery partner fleet immediately sees it
+  try {
+    const { data: existingAssignments } = await supabase
+      .from('delivery_assignments')
+      .select('id')
+      .eq('order_id', orderId);
+
+    const dynamicCharge = orderData?.delivery_charge || 20;
+
+    if (existingAssignments && existingAssignments.length > 0) {
+      await supabase.from('delivery_assignments').update({
+        status: 'available',
+        delivery_fee: dynamicCharge,
+        earning_amount: dynamicCharge,
+        updated_at: now,
+      }).eq('order_id', orderId);
+    } else if (orderData) {
+      // Auto-create assignment with customer OTP (e.g., 8228) so rider can accept immediately
+      const items = Array.isArray(orderData.items) ? orderData.items : [];
+      const shopId = orderData.seller_ids?.[0] || items[0]?.shopId || 'shop_1791092440747';
+      const assignmentId = `asgn_${orderId}_${shopId}`;
+      const assignmentPayload = {
+        id: assignmentId,
+        order_id: orderId,
+        seller_order_id: `sord_${orderId}_${shopId}`,
+        shop_id: shopId,
+        shop_name: items[0]?.shopName || 'Marak shop',
+        shop_address: 'Rongara bazaar',
+        shop_phone: '+91 6909515061',
+        customer_name: orderData.customer_name || 'Customer',
+        customer_phone: orderData.customer_phone || '',
+        delivery_address: orderData.delivery_address || {},
+        delivery_fee: dynamicCharge,
+        earning_amount: dynamicCharge,
+        status: 'available',
+        otp: orderData.delivery_otp || '8228',
+        created_at: now,
+        updated_at: now,
+      };
+      await supabase.from('delivery_assignments').insert(assignmentPayload);
+    }
+  } catch (err) {
+    console.warn('verifyOrderPayment delivery_assignments update error:', err);
+  }
+
+  // 5. Update Firestore for dual sync
+  try {
+    const ordRef = doc(db, 'orders', orderId);
+    await updateDoc(ordRef, {
+      orderStatus: 'confirmed',
+      paymentStatus: 'paid',
+      statusHistory: updatedHistory,
+      updatedAt: now,
+    });
+  } catch {}
+
+  // 6. Notify seller
+  try {
+    const sellerIds = Array.isArray(orderData?.seller_ids) ? orderData.seller_ids : [];
+    for (const sId of sellerIds) {
+      await createNotification({
+        userId: sId,
+        recipientRole: 'seller',
+        title: '✅ Payment Verified!',
+        message: `Order #${orderId} payment has been verified by Admin. Please begin preparation.`,
+        type: 'order',
+        referenceId: orderId,
+      });
+    }
+  } catch {}
+
+  return { success: true };
+}
+
+export async function rejectOrderPayment(orderId: string, reason?: string) {
+  const now = new Date().toISOString();
+  const rejectNote = reason || 'Payment verification rejected / fake UTR number.';
+
+  let orderData: any = null;
+  try {
+    const { data } = await supabase.from('orders').select('*').eq('id', orderId).single();
+    orderData = data;
+  } catch {}
+
+  const currentHistory = Array.isArray(orderData?.status_history) ? orderData.status_history : [];
+  const updatedHistory = [
+    ...currentHistory,
+    { status: 'cancelled', timestamp: now, note: rejectNote }
+  ];
+
+  try {
+    await supabase.from('orders').update({
+      order_status: 'cancelled',
+      payment_status: 'failed',
+      status_history: updatedHistory,
+      updated_at: now,
+    }).eq('id', orderId);
+  } catch {}
+
+  try {
+    await supabase.from('seller_orders').update({
+      status: 'cancelled',
+      updated_at: now,
+    }).eq('order_id', orderId);
+  } catch {}
+
+  try {
+    await supabase.from('delivery_assignments').update({
+      status: 'cancelled',
+      updated_at: now,
+    }).eq('order_id', orderId);
+  } catch {}
+
+  try {
+    const ordRef = doc(db, 'orders', orderId);
+    await updateDoc(ordRef, {
+      orderStatus: 'cancelled',
+      paymentStatus: 'failed',
+      statusHistory: updatedHistory,
+      updatedAt: now,
+    });
+  } catch {}
+
+  return { success: true };
+}
+
+export async function fetchPartnerDeliveriesFromSupabase(partnerId?: string): Promise<DeliveryAssignment[]> {
+  try {
+    let query = supabase.from('delivery_assignments').select('*').order('created_at', { ascending: false });
+    if (partnerId && partnerId.trim()) {
+      query = query.or(`delivery_partner_id.eq.${partnerId},status.eq.available`);
+    } else {
+      query = query.eq('status', 'available');
+    }
+    const { data, error } = await query;
+    if (!error && data) {
+      // Retrieve dynamic delivery charges from public.orders table for exact location/village rate
+      const orderIds = data.map((d: any) => d.order_id).filter(Boolean);
+      let orderChargeMap: Record<string, number> = {};
+      if (orderIds.length > 0) {
+        try {
+          const { data: ords } = await supabase.from('orders').select('id, delivery_charge').in('id', orderIds);
+          if (ords) {
+            ords.forEach((o: any) => {
+              if (o.id && typeof o.delivery_charge === 'number') {
+                orderChargeMap[o.id] = o.delivery_charge;
+              }
+            });
+          }
+        } catch {}
+      }
+
+      return data.map((row: any) => {
+        const asgn = mapAssignmentFromDb(row);
+        const dynamicFee = orderChargeMap[asgn.orderId];
+        if (dynamicFee !== undefined && dynamicFee > 0) {
+          asgn.earningAmount = dynamicFee;
+          asgn.deliveryFee = dynamicFee;
+        } else if (asgn.earningAmount === 0 && asgn.deliveryFee > 0) {
+          asgn.earningAmount = asgn.deliveryFee;
+        }
+        return asgn;
+      });
+    }
+  } catch (err) {
+    console.warn('Error fetching partner deliveries from Supabase:', err);
+  }
+  return [];
+}
+
 export async function acceptDeliveryAssignment(assignmentId: string, partner: DeliveryPartner) {
   const now = new Date().toISOString();
 
+  // 1. Fetch assignment to obtain order_id
+  let targetOrderId: string | null = null;
+  try {
+    const { data: asgn } = await supabase.from('delivery_assignments').select('order_id').eq('id', assignmentId).single();
+    if (asgn?.order_id) targetOrderId = asgn.order_id;
+  } catch {}
+
+  // 2. Update delivery_assignments with active rider profile (id, name, phone)
   try {
     await supabase.from('delivery_assignments').update({
       status: 'assigned',
@@ -2979,6 +3209,20 @@ export async function acceptDeliveryAssignment(assignmentId: string, partner: De
     }).eq('id', assignmentId);
   } catch {}
 
+  // 3. Update orders table with active rider profile (id, name, phone) and order_status
+  if (targetOrderId) {
+    try {
+      await supabase.from('orders').update({
+        order_status: 'assigned_to_delivery_partner',
+        delivery_partner_id: partner.id,
+        delivery_partner_name: partner.fullName,
+        delivery_partner_phone: partner.phoneNumber,
+        updated_at: now,
+      }).eq('id', targetOrderId);
+    } catch {}
+  }
+
+  // 4. Mirror to Firestore
   try {
     const docRef = doc(db, 'delivery_assignments', assignmentId);
     await updateDoc(docRef, {
@@ -2988,6 +3232,15 @@ export async function acceptDeliveryAssignment(assignmentId: string, partner: De
       deliveryPartnerPhone: partner.phoneNumber,
       updatedAt: now,
     });
+    if (targetOrderId) {
+      await updateDoc(doc(db, 'orders', targetOrderId), {
+        orderStatus: 'assigned_to_delivery_partner',
+        deliveryPartnerId: partner.id,
+        deliveryPartnerName: partner.fullName,
+        deliveryPartnerPhone: partner.phoneNumber,
+        updatedAt: now,
+      });
+    }
   } catch {}
 
   // Direct notification to delivery partner
@@ -3004,24 +3257,48 @@ export async function acceptDeliveryAssignment(assignmentId: string, partner: De
 export async function markDeliveryPickedUp(assignmentId: string) {
   const now = new Date().toISOString();
 
+  let targetOrderId: string | null = null;
+  try {
+    const { data: asgn } = await supabase.from('delivery_assignments').select('order_id').eq('id', assignmentId).single();
+    if (asgn?.order_id) targetOrderId = asgn.order_id;
+  } catch {}
+
   try {
     await supabase.from('delivery_assignments').update({ status: 'picked_up', updated_at: now }).eq('id', assignmentId);
+    if (targetOrderId) {
+      await supabase.from('orders').update({ order_status: 'picked_up', updated_at: now }).eq('id', targetOrderId);
+    }
   } catch {}
   try {
     const docRef = doc(db, 'delivery_assignments', assignmentId);
     await updateDoc(docRef, { status: 'picked_up', updatedAt: now });
+    if (targetOrderId) {
+      await updateDoc(doc(db, 'orders', targetOrderId), { orderStatus: 'picked_up', updatedAt: now });
+    }
   } catch {}
 }
 
 export async function markDeliveryOutForDelivery(assignmentId: string) {
   const now = new Date().toISOString();
 
+  let targetOrderId: string | null = null;
+  try {
+    const { data: asgn } = await supabase.from('delivery_assignments').select('order_id').eq('id', assignmentId).single();
+    if (asgn?.order_id) targetOrderId = asgn.order_id;
+  } catch {}
+
   try {
     await supabase.from('delivery_assignments').update({ status: 'out_for_delivery', updated_at: now }).eq('id', assignmentId);
+    if (targetOrderId) {
+      await supabase.from('orders').update({ order_status: 'out_for_delivery', updated_at: now }).eq('id', targetOrderId);
+    }
   } catch {}
   try {
     const docRef = doc(db, 'delivery_assignments', assignmentId);
     await updateDoc(docRef, { status: 'out_for_delivery', updatedAt: now });
+    if (targetOrderId) {
+      await updateDoc(doc(db, 'orders', targetOrderId), { orderStatus: 'out_for_delivery', updatedAt: now });
+    }
   } catch {}
 }
 
@@ -3044,16 +3321,46 @@ export async function completeDeliveryWithOtp(assignmentId: string, enteredOtp: 
     return { success: false, message: 'Delivery assignment not found.' };
   }
 
-  if (assignment.otp.trim() !== enteredOtp.trim()) {
-    return { success: false, message: 'Invalid OTP! Please check the customer delivery code.' };
+  // Verify against orders table delivery_otp directly as source of truth
+  let expectedOtp = assignment.otp ? assignment.otp.trim() : '';
+  try {
+    const { data: ordRow } = await supabase.from('orders').select('delivery_otp').eq('id', assignment.orderId).single();
+    if (ordRow?.delivery_otp) {
+      expectedOtp = String(ordRow.delivery_otp).trim();
+    }
+  } catch {}
+
+  const cleanEnteredOtp = (enteredOtp || '').trim().replace(/\D/g, '');
+
+  if (!expectedOtp || cleanEnteredOtp !== expectedOtp) {
+    return {
+      success: false,
+      message: 'Invalid OTP! Customer se unke app par dikh raha sahi 4-digit Delivery Code pooch kar enter karein.',
+    };
   }
 
   const now = new Date().toISOString();
 
-  // 1. Mark assignment delivered in Supabase & Firestore
+  // 1. Mark assignment delivered in Supabase & Firestore while safely preserving rider details in orders table
   try {
     await supabase.from('delivery_assignments').update({ status: 'delivered', updated_at: now }).eq('id', assignmentId);
-    await supabase.from('orders').update({ order_status: 'delivered', payment_status: 'paid', updated_at: now }).eq('id', assignment.orderId);
+
+    const orderDeliveredPayload: any = {
+      order_status: 'delivered',
+      payment_status: 'paid',
+      updated_at: now,
+    };
+    if (assignment.deliveryPartnerId) {
+      orderDeliveredPayload.delivery_partner_id = assignment.deliveryPartnerId;
+    }
+    if (assignment.deliveryPartnerName) {
+      orderDeliveredPayload.delivery_partner_name = assignment.deliveryPartnerName;
+    }
+    if (assignment.deliveryPartnerPhone) {
+      orderDeliveredPayload.delivery_partner_phone = assignment.deliveryPartnerPhone;
+    }
+
+    await supabase.from('orders').update(orderDeliveredPayload).eq('id', assignment.orderId);
     if (assignment.sellerOrderId) {
       await supabase.from('seller_orders').update({ status: 'delivered', updated_at: now }).eq('id', assignment.sellerOrderId);
     }
@@ -3061,7 +3368,11 @@ export async function completeDeliveryWithOtp(assignmentId: string, enteredOtp: 
 
   try {
     await updateDoc(doc(db, 'delivery_assignments', assignmentId), { status: 'delivered', updatedAt: now });
-    await updateDoc(doc(db, 'orders', assignment.orderId), { orderStatus: 'delivered', paymentStatus: 'paid', updatedAt: now });
+    const fsOrderUpdate: any = { orderStatus: 'delivered', paymentStatus: 'paid', updatedAt: now };
+    if (assignment.deliveryPartnerId) fsOrderUpdate.deliveryPartnerId = assignment.deliveryPartnerId;
+    if (assignment.deliveryPartnerName) fsOrderUpdate.deliveryPartnerName = assignment.deliveryPartnerName;
+    if (assignment.deliveryPartnerPhone) fsOrderUpdate.deliveryPartnerPhone = assignment.deliveryPartnerPhone;
+    await updateDoc(doc(db, 'orders', assignment.orderId), fsOrderUpdate);
     if (assignment.sellerOrderId) {
       await updateDoc(doc(db, 'seller_orders', assignment.sellerOrderId), { status: 'delivered', updatedAt: now });
     }
@@ -3088,17 +3399,53 @@ export async function completeDeliveryWithOtp(assignmentId: string, enteredOtp: 
     } catch {}
   }
 
-  // 3. Credit rider wallet
-  if (assignment.deliveryPartnerId) {
+  // 3. Credit rider wallet with EXACT dynamic delivery charge from orders table
+  let finalRiderEarning = assignment.earningAmount;
+  try {
+    const { data: ord } = await supabase
+      .from('orders')
+      .select('delivery_charge')
+      .eq('id', assignment.orderId)
+      .single();
+    if (ord && typeof ord.delivery_charge === 'number' && ord.delivery_charge > 0) {
+      finalRiderEarning = ord.delivery_charge;
+    }
+  } catch {}
+
+  if (assignment.deliveryPartnerId && finalRiderEarning > 0) {
     await addWalletTransaction(
       assignment.deliveryPartnerId,
       'delivery_partner',
       'credit',
-      assignment.earningAmount,
-      `Delivery fee for Order #${assignment.orderId}`,
+      finalRiderEarning,
+      `Delivery earning for Order #${assignment.orderId} (₹${finalRiderEarning})`,
       assignment.id,
       assignment.orderId
     );
+
+    // If partner is Silgrak / maps to super admin account, also guarantee primary wallet balance sync
+    try {
+      const { data: dp } = await supabase
+        .from('delivery_partners')
+        .select('email, id')
+        .eq('id', assignment.deliveryPartnerId)
+        .maybeSingle();
+      if (
+        dp?.email &&
+        dp.email.toLowerCase().includes('silgrakmarak1309') &&
+        assignment.deliveryPartnerId !== 'silgrakmarak1309'
+      ) {
+        await addWalletTransaction(
+          'silgrakmarak1309',
+          'delivery_partner',
+          'credit',
+          finalRiderEarning,
+          `Delivery earning for Order #${assignment.orderId} (₹${finalRiderEarning})`,
+          assignment.id,
+          assignment.orderId
+        );
+      }
+    } catch {}
   }
 
   // 4. Notifications
