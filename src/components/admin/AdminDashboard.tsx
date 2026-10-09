@@ -32,6 +32,8 @@ import {
   CheckCheck,
   X,
   AlertCircle,
+  Phone,
+  MapPin,
 } from 'lucide-react';
 import {
   Shop,
@@ -216,7 +218,6 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
       o.orderStatus === 'pending_verification' ||
       o.orderStatus === 'pending' ||
       o.paymentStatus === 'pending' ||
-      o.paymentStatus === 'unpaid' ||
       Boolean(o.transactionId && String(o.transactionId).trim().length > 0)
     );
   };
@@ -521,7 +522,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
   ];
 
   return (
-    <div className="max-w-7xl mx-auto px-2 sm:px-4 py-4 space-y-5 pb-24">
+    <div className="max-w-7xl mx-auto px-2 sm:px-4 py-3 sm:py-5 space-y-4 sm:space-y-5 pb-24 w-full overflow-x-hidden">
       {/* 1. TOP PARTNER HUB HEADER */}
       <div className="bg-linear-to-r from-slate-900 via-indigo-950 to-purple-950 text-white rounded-2xl p-4 sm:p-6 shadow-xl border border-indigo-900/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
@@ -861,19 +862,21 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
               </div>
               <div className="divide-y divide-slate-100 text-xs">
                 {orders.slice(0, 6).map((o) => (
-                  <div key={o.id} className="py-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <span className="font-bold text-slate-900">#{o.id}</span>
-                        <span className="text-slate-500 ml-2">{o.customerName}</span>
-                        <div className="text-[11px] text-slate-400">
-                          {o.items.length} items • OTP: <strong className="text-slate-700">{o.deliveryOtp}</strong>
+                  <div key={o.id} className="py-3 space-y-2.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-extrabold text-slate-900 text-xs sm:text-sm">#{o.id}</span>
+                          <span className="text-slate-600 font-semibold truncate text-xs" title={o.customerName}>{o.customerName}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400 truncate">
+                          {o.items.length} items • OTP: <strong className="text-slate-700 font-black">{o.deliveryOtp}</strong>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="font-black text-slate-900">₹{o.totalAmount.toLocaleString('en-IN')}</div>
+                      <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 pt-0.5 sm:pt-0">
+                        <div className="font-black text-slate-900 text-xs sm:text-sm">₹{o.totalAmount.toLocaleString('en-IN')}</div>
                         <span
-                          className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                          className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase shrink-0 ${
                             isOrderPendingVerification(o)
                               ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
                               : 'bg-slate-100 text-slate-700'
@@ -886,34 +889,35 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
 
                     {/* Direct Quick Verify Payment Button on Dashboard Tab */}
                     {isOrderPendingVerification(o) && (
-                      <div className="p-2.5 bg-linear-to-r from-amber-50 to-orange-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                        <div className="space-y-0.5">
+                      <div className="p-3 md:p-4 bg-linear-to-r from-amber-50 to-orange-50 border border-amber-300 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs overflow-hidden">
+                        <div className="space-y-1 min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 font-bold text-amber-950 text-xs">
-                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 animate-pulse shrink-0" />
                             <span>Payment Verification Pending</span>
                           </div>
-                          <div className="text-[11px] text-amber-900">
+                          <div className="text-[11px] text-amber-900 break-words">
                             Customer UTR:{' '}
-                            <code className="font-mono font-black text-xs bg-white px-1.5 py-0.2 rounded border border-amber-300 text-blue-900 inline-block">
+                            <code className="font-mono font-black text-xs bg-white px-2 py-0.5 rounded border border-amber-300 text-blue-900 inline-block break-all max-w-full shadow-2xs">
                               {o.transactionId || 'N/A'}
                             </code>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex flex-col gap-2 w-full md:flex-row md:w-auto shrink-0 pt-1 md:pt-0">
                           <button
                             onClick={() => handleRejectPayment(o.id)}
                             disabled={actionLoading === `reject_${o.id}` || actionLoading === `verify_${o.id}`}
-                            className="px-2.5 py-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-xs rounded-lg transition disabled:opacity-50 cursor-pointer"
+                            className="w-full md:w-auto px-3.5 py-2.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-xs rounded-xl transition disabled:opacity-50 cursor-pointer flex items-center justify-center text-center shadow-2xs"
                           >
-                            Reject
+                            <X className="w-3.5 h-3.5 text-rose-600 mr-1 shrink-0" />
+                            <span>Reject</span>
                           </button>
                           <button
                             onClick={() => handleVerifyPayment(o.id)}
                             disabled={actionLoading === `verify_${o.id}` || actionLoading === `reject_${o.id}`}
-                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-lg shadow-sm transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+                            className="w-full md:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95 text-center"
                           >
-                            <CheckCircle className="w-3.5 h-3.5 text-emerald-200" />
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-200 shrink-0" />
                             <span>{actionLoading === `verify_${o.id}` ? 'Verifying...' : 'Verify Payment & Confirm ✓'}</span>
                           </button>
                         </div>
@@ -1350,10 +1354,10 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
           </div>
 
           {/* Quick Filter Tabs for Orders */}
-          <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-100 rounded-xl text-xs">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 p-1.5 bg-slate-100 rounded-xl text-xs w-full">
             <button
               onClick={() => setOrderFilter('all')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg font-bold transition cursor-pointer shrink-0 ${
                 orderFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -1361,7 +1365,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
             </button>
             <button
               onClick={() => setOrderFilter('pending_verification')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
                 orderFilter === 'pending_verification'
                   ? 'bg-amber-500 text-slate-950 shadow-2xs'
                   : 'text-amber-800 hover:text-amber-950'
@@ -1374,7 +1378,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
             </button>
             <button
               onClick={() => setOrderFilter('active')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg font-bold transition cursor-pointer shrink-0 ${
                 orderFilter === 'active' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -1382,7 +1386,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
             </button>
             <button
               onClick={() => setOrderFilter('delivered')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg font-bold transition cursor-pointer shrink-0 ${
                 orderFilter === 'delivered' ? 'bg-white text-emerald-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -1390,7 +1394,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
             </button>
             <button
               onClick={() => setOrderFilter('cancelled')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg font-bold transition cursor-pointer shrink-0 ${
                 orderFilter === 'cancelled' ? 'bg-white text-red-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -1412,20 +1416,25 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                 return true;
               })
               .map((o) => (
-              <div key={o.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs space-y-3">
+              <div key={o.id} className="bg-white rounded-2xl border border-slate-200 p-3 md:p-5 shadow-2xs space-y-3.5 overflow-hidden w-full max-w-full">
+                {/* 1. Header: Order ID, Date, OTP & Status */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5 text-xs">
-                  <div>
-                    <span className="font-black text-slate-900 text-sm">#{o.id}</span>
-                    <span className="text-slate-400 ml-2">
-                      {new Date(o.createdAt).toLocaleDateString()} {new Date(o.createdAt).toLocaleTimeString()}
-                    </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-black text-slate-900 text-sm tracking-tight truncate max-w-[180px] sm:max-w-none">
+                        #{o.id}
+                      </span>
+                      <span className="text-slate-400 text-[11px] truncate">
+                        {new Date(o.createdAt).toLocaleDateString()} • {new Date(o.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-slate-500 font-bold">
-                      OTP: <strong className="text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{o.deliveryOtp}</strong>
+                  <div className="flex items-center justify-between sm:justify-end gap-2 flex-wrap shrink-0">
+                    <span className="text-slate-500 font-bold text-[11px] bg-slate-50 border border-slate-200/80 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                      OTP: <strong className="text-indigo-700 font-black">{o.deliveryOtp}</strong>
                     </span>
                     <span
-                      className={`px-2.5 py-0.5 rounded-full font-bold uppercase text-[10px] ${
+                      className={`px-2.5 py-0.5 rounded-full font-extrabold uppercase text-[10px] tracking-wider shrink-0 ${
                         o.orderStatus === 'delivered'
                           ? 'bg-emerald-100 text-emerald-800'
                           : o.orderStatus === 'cancelled'
@@ -1440,89 +1449,145 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-600">
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Customer Details</span>
-                    <strong className="text-slate-900">{o.customerName}</strong>
-                    <div>{o.customerPhone}</div>
-                    <div className="text-slate-500 text-[11px] line-clamp-1">
-                      {o.deliveryAddress?.streetAddress}, {o.deliveryAddress?.city}
+                {/* 2. Customer, Payment, and Rider Details in Mobile Column (flex-col) / Desktop Row (md:flex-row) */}
+                <div className="flex flex-col md:flex-row gap-3 text-xs text-slate-600 w-full">
+                  {/* Customer Details */}
+                  <div className="flex-1 w-full bg-slate-50/80 p-3 sm:p-3.5 rounded-xl border border-slate-200/60 space-y-1.5 min-w-0 overflow-hidden">
+                    <span className="text-[10px] text-slate-400 uppercase font-black tracking-wider block">Customer Details</span>
+                    <div className="font-extrabold text-slate-900 truncate text-xs sm:text-sm block max-w-full" title={o.customerName}>
+                      {o.customerName}
+                    </div>
+                    <div className="text-slate-600 text-xs truncate flex items-center gap-1.5">
+                      <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="truncate">{o.customerPhone || 'No phone provided'}</span>
+                    </div>
+                    <div className="text-slate-500 text-[11px] line-clamp-2 break-words max-w-full" title={`${o.deliveryAddress?.streetAddress || ''}, ${o.deliveryAddress?.city || ''}`}>
+                      <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 inline mr-1" />
+                      {o.deliveryAddress?.streetAddress ? `${o.deliveryAddress.streetAddress}, ${o.deliveryAddress.city || ''}` : 'Standard delivery address'}
                     </div>
                   </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Payment & Fee</span>
-                    <div>Total: <strong className="text-slate-900">₹{o.totalAmount}</strong> ({o.paymentMethod.toUpperCase()})</div>
-                    <div className="text-[11px] text-slate-400">
-                      Subtotal: ₹{o.subtotal} | Delivery: ₹{o.deliveryCharge} | Fee: ₹{o.platformFee}
+
+                  {/* Payment & Fee */}
+                  <div className="flex-1 w-full bg-slate-50/80 p-3 sm:p-3.5 rounded-xl border border-slate-200/60 space-y-1.5 min-w-0 overflow-hidden">
+                    <span className="text-[10px] text-slate-400 uppercase font-black tracking-wider block">Payment & Fee</span>
+                    <div className="text-slate-800 flex items-center justify-between">
+                      <span className="text-slate-500 text-xs">Total Bill:</span>
+                      <strong className="text-slate-900 font-black text-sm">₹{o.totalAmount.toLocaleString('en-IN')}</strong>
+                    </div>
+                    <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                      <span>Method:</span>
+                      <span className="font-bold uppercase bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] border border-blue-100">
+                        {o.paymentMethod}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 pt-0.5 truncate">
+                      Items: ₹{o.subtotal} • Del: ₹{o.deliveryCharge} • Fee: ₹{o.platformFee}
                     </div>
                     {o.transactionId && (
-                      <div className="mt-1">
-                        <span className="text-[10px] text-slate-400 font-bold block">UPI UTR Ref:</span>
-                        <code className="text-xs font-mono font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 inline-block">
+                      <div className="pt-1.5 border-t border-slate-200/60 mt-1">
+                        <span className="text-[10px] text-slate-500 font-bold block mb-0.5">UPI 12-digit UTR:</span>
+                        <code className="text-xs font-mono font-black text-blue-900 bg-white px-2 py-1 rounded border border-blue-200 block truncate max-w-full break-all shadow-2xs">
                           {o.transactionId}
                         </code>
                       </div>
                     )}
                   </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Delivery Rider</span>
-                    <div>{o.deliveryPartnerName || 'Unassigned / Pending Pickup'}</div>
-                    <div className="text-slate-400 text-[11px]">{o.deliveryPartnerPhone || 'Awaiting acceptance'}</div>
+
+                  {/* Delivery Rider */}
+                  <div className="flex-1 w-full bg-slate-50/80 p-3 sm:p-3.5 rounded-xl border border-slate-200/60 space-y-1.5 min-w-0 overflow-hidden">
+                    <span className="text-[10px] text-slate-400 uppercase font-black tracking-wider block">Delivery Rider</span>
+                    <div className="font-extrabold text-slate-900 truncate text-xs sm:text-sm" title={o.deliveryPartnerName || 'Unassigned'}>
+                      {o.deliveryPartnerName || 'Unassigned (Broadcasted)'}
+                    </div>
+                    <div className="text-slate-500 text-[11px] truncate flex items-center gap-1.5">
+                      <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="truncate">{o.deliveryPartnerPhone || 'Awaiting rider acceptance'}</span>
+                    </div>
+                    <div className="pt-1">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold uppercase inline-block ${
+                        o.deliveryPartnerName ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                      }`}>
+                        {o.deliveryPartnerName ? 'Rider Assigned' : 'Awaiting Acceptance'}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                <div className="bg-slate-50 rounded-xl p-2.5 space-y-1.5">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Ordered Items ({o.items.length})</span>
-                  {o.items.map((it, idx) => (
-                    <div key={idx} className="flex items-center justify-between text-xs text-slate-700">
-                      <span>
-                        {it.name} <strong className="text-slate-900">x{it.quantity}</strong> ({it.shopName})
-                      </span>
-                      <span className="font-bold">₹{it.discountPrice * it.quantity}</span>
-                    </div>
-                  ))}
+                {/* 3. Ordered Items List with Responsive Grid / Full Width Boundaries */}
+                <div className="bg-slate-50/90 rounded-xl p-3 md:p-4 border border-slate-200/80 space-y-2.5 w-full overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-slate-200/80 pb-2 text-xs">
+                    <span className="text-[10px] text-slate-500 uppercase font-black tracking-wider">
+                      Ordered Items ({o.items.length})
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-bold">Qty × Subtotal</span>
+                  </div>
+                  <div className="divide-y divide-slate-200/60">
+                    {o.items.map((it, idx) => (
+                      <div key={idx} className="py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-3 text-xs">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-slate-900 truncate text-xs sm:text-sm" title={it.name}>
+                            {it.name}
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
+                            <span className="bg-slate-200/90 text-slate-800 font-extrabold px-1.5 py-0.5 rounded text-[10px]">
+                              Qty: {it.quantity}
+                            </span>
+                            <span className="text-slate-300">•</span>
+                            <span className="truncate text-slate-500 max-w-[160px] sm:max-w-xs">{it.shopName}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 pt-1 sm:pt-0 border-t border-slate-100 sm:border-0">
+                          <span className="text-[11px] text-slate-400 sm:hidden">Item Subtotal:</span>
+                          <span className="font-black text-slate-900 text-xs sm:text-sm">
+                            ₹{(it.discountPrice * it.quantity).toLocaleString('en-IN')}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
+                {/* 4. Action Verification Box with Full-Width Responsive Stacked Buttons on Mobile (flex-col gap-2 w-full md:flex-row md:w-auto) */}
                 {isOrderPendingVerification(o) && (
-                  <div className="p-3.5 bg-linear-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-black text-amber-950 flex items-center gap-1.5 text-sm">
-                          <AlertCircle className="w-4 h-4 text-amber-600 animate-pulse" />
+                  <div className="p-3 md:p-5 bg-linear-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs shadow-xs overflow-hidden w-full">
+                    <div className="space-y-1.5 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-amber-950 flex items-center gap-1.5 text-xs sm:text-sm">
+                          <AlertCircle className="w-4 h-4 text-amber-600 animate-pulse shrink-0" />
                           Payment Verification Pending
                         </span>
                         <span className="bg-amber-200 text-amber-900 font-extrabold px-2 py-0.5 rounded text-[10px] uppercase">
                           Action Required
                         </span>
                       </div>
-                      <div className="text-amber-900 text-xs">
+                      <div className="text-amber-900 text-xs break-words">
                         Customer submitted 12-digit UTR:{' '}
-                        <code className="font-mono font-black text-sm bg-white px-2 py-0.5 rounded border border-amber-400 text-blue-900 shadow-2xs inline-block">
+                        <code className="font-mono font-black text-xs sm:text-sm bg-white px-2 py-1 rounded border border-amber-400 text-blue-900 shadow-2xs inline-block max-w-full break-all">
                           {o.transactionId || 'N/A'}
                         </code>
                       </div>
                       <p className="text-[11px] text-amber-800">
-                        Check your bank statement or UPI merchant app for credit of <strong>₹{o.totalAmount}</strong>.
+                        Check your bank statement or UPI merchant app for credit of <strong>₹{o.totalAmount.toLocaleString('en-IN')}</strong>.
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex flex-col gap-2 w-full md:flex-row md:w-auto shrink-0 pt-1 md:pt-0">
                       <button
                         onClick={() => handleRejectPayment(o.id)}
                         disabled={actionLoading === `reject_${o.id}` || actionLoading === `verify_${o.id}`}
-                        className="px-3.5 py-2 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 hover:border-rose-400 font-bold text-xs rounded-xl shadow-2xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="w-full md:w-auto px-4 py-2.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 hover:border-rose-400 font-bold text-xs rounded-xl shadow-2xs transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 text-center"
                         title="Reject payment and mark order cancelled"
                       >
-                        <X className="w-4 h-4 text-rose-600" />
+                        <X className="w-4 h-4 text-rose-600 shrink-0" />
                         <span>{actionLoading === `reject_${o.id}` ? 'Rejecting...' : 'Reject (Fake UTR)'}</span>
                       </button>
 
                       <button
                         onClick={() => handleVerifyPayment(o.id)}
                         disabled={actionLoading === `verify_${o.id}` || actionLoading === `reject_${o.id}`}
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer disabled:opacity-50 active:scale-95"
+                        className="w-full md:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-95 text-center"
                       >
-                        <CheckCircle className="w-4 h-4 text-emerald-200" />
+                        <CheckCircle className="w-4 h-4 text-emerald-200 shrink-0" />
                         <span>{actionLoading === `verify_${o.id}` ? 'Verifying & Syncing...' : 'Verify Payment & Confirm ✓'}</span>
                       </button>
                     </div>
