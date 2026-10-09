@@ -532,7 +532,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white uppercase">PARTNER HUB</h1>
               <span className="text-[10px] bg-yellow-400 text-purple-950 font-black px-2 py-0.5 rounded uppercase tracking-wider">
-                Enterprise Command
+                Enterprise Command v1.2.0
               </span>
               <span className="text-[11px] bg-indigo-800/80 text-indigo-200 px-2 py-0.5 rounded-full border border-indigo-700">
                 Administrator: <strong className="text-white font-bold">{adminUser.username}</strong>
