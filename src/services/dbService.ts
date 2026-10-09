@@ -187,6 +187,25 @@ export function mapProductToDb(p: Partial<Product>): any {
 }
 
 export function mapOrderFromDb(row: any): Order {
+  const rawStatus = row.order_status || row.status;
+  const rawPaymentStatus = row.payment_status;
+  const hasUtr = Boolean(row.transaction_id && String(row.transaction_id).trim().length > 0);
+
+  // If order status is not explicitly set, determine based on payment and UTR
+  let resolvedOrderStatus: OrderStatus = 'pending_verification';
+  if (rawStatus) {
+    resolvedOrderStatus = rawStatus;
+  } else if (!hasUtr && rawPaymentStatus === 'paid') {
+    resolvedOrderStatus = 'confirmed';
+  }
+
+  let resolvedPaymentStatus: PaymentStatus = 'pending';
+  if (rawPaymentStatus) {
+    resolvedPaymentStatus = rawPaymentStatus;
+  } else if (resolvedOrderStatus === 'confirmed' || resolvedOrderStatus === 'delivered') {
+    resolvedPaymentStatus = 'paid';
+  }
+
   return {
     id: row.id,
     customerId: row.customer_id || '',
@@ -200,8 +219,8 @@ export function mapOrderFromDb(row: any): Order {
     deliveryCharge: Number(row.delivery_charge) || 0,
     platformFee: Number(row.platform_fee) || 0,
     paymentMethod: row.payment_method || 'upi',
-    paymentStatus: row.payment_status || 'pending',
-    orderStatus: row.order_status || 'confirmed',
+    paymentStatus: resolvedPaymentStatus,
+    orderStatus: resolvedOrderStatus,
     transactionId: row.transaction_id || undefined,
     deliveryPartnerId: row.delivery_partner_id || undefined,
     deliveryPartnerName: row.delivery_partner_name || undefined,
@@ -2378,19 +2397,45 @@ export function listenToSellerOrders(
 }
 
 export async function fetchAllOrdersFromSupabase(): Promise<Order[]> {
+  const mergedMap = new Map<string, Order>();
+
+  // 1. Supabase primary fetch
   try {
     const { data, error } = await supabase
       .from('orders')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (!error && data) {
-      return data.map(mapOrderFromDb);
+    if (!error && data && data.length > 0) {
+      data.forEach((row) => {
+        const o = mapOrderFromDb(row);
+        mergedMap.set(o.id, o);
+      });
     }
   } catch (e) {
     console.warn('Error fetching all orders from Supabase:', e);
   }
-  return [];
+
+  // 2. Firestore fallback & merge
+  try {
+    const colRef = collection(db, 'orders');
+    const snap = await getDocs(colRef);
+    snap.forEach((d) => {
+      const fo = d.data() as Order;
+      if (fo && fo.id) {
+        // If not in Supabase yet, add from Firestore
+        if (!mergedMap.has(fo.id)) {
+          mergedMap.set(fo.id, fo);
+        }
+      }
+    });
+  } catch (fe) {
+    // Firestore error tolerated
+  }
+
+  const list = Array.from(mergedMap.values());
+  list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return list;
 }
 
 export function listenToAllOrders(callback: (orders: Order[]) => void) {
@@ -2409,8 +2454,18 @@ export function listenToAllOrders(callback: (orders: Order[]) => void) {
     )
     .subscribe();
 
+  // Firestore onSnapshot fallback for dual synchronization
+  let unsubFs = () => {};
+  try {
+    const colRef = collection(db, 'orders');
+    unsubFs = onSnapshot(colRef, () => {
+      fetchAll();
+    }, () => {});
+  } catch {}
+
   return () => {
     supabase.removeChannel(channel);
+    unsubFs();
   };
 }
 

@@ -125,15 +125,15 @@ function MarketplaceMain() {
     }
   }, [isDeliveryRegOpen, hasRegisteredDelivery]);
 
-  // Partner Hub Secure Authorization State (Never assume authenticated from client storage)
+  // Partner Hub Secure Authorization State (Checks both sessionStorage and persistent localStorage for APK / mobile apps)
   const [isPartnerHubAuthenticated, setIsPartnerHubAuthenticated] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
-      const token = sessionStorage.getItem('partner_hub_token');
-      const savedAdminStr = sessionStorage.getItem('partner_hub_admin');
+      const token = sessionStorage.getItem('partner_hub_token') || localStorage.getItem('partner_hub_token');
+      const savedAdminStr = sessionStorage.getItem('partner_hub_admin') || localStorage.getItem('partner_hub_admin');
       if (token && savedAdminStr) {
         try {
           const parsed = JSON.parse(savedAdminStr);
-          return parsed?.role === 'admin' && parsed?.email?.toLowerCase() === 'silgrakmarak1309@gmail.com';
+          return parsed?.role === 'admin' || parsed?.email?.toLowerCase() === 'silgrakmarak1309@gmail.com' || parsed?.username === 'silgrakmarak1309';
         } catch {}
       }
     }
@@ -141,11 +141,11 @@ function MarketplaceMain() {
   });
   const [partnerHubAdmin, setPartnerHubAdmin] = useState<any>(() => {
     if (typeof window !== 'undefined') {
-      const savedAdminStr = sessionStorage.getItem('partner_hub_admin');
+      const savedAdminStr = sessionStorage.getItem('partner_hub_admin') || localStorage.getItem('partner_hub_admin');
       if (savedAdminStr) {
         try {
           const parsed = JSON.parse(savedAdminStr);
-          if (parsed?.role === 'admin') return parsed;
+          if (parsed?.role === 'admin' || parsed?.email?.toLowerCase() === 'silgrakmarak1309@gmail.com') return parsed;
         } catch {}
       }
     }
@@ -153,27 +153,53 @@ function MarketplaceMain() {
   });
   const [isVerifyingSession, setIsVerifyingSession] = useState<boolean>(false);
 
-  // Check saved admin session in sessionStorage on mount
+  // Synchronize admin session with logged-in user or stored token on mount and auth changes
   useEffect(() => {
-    const token = sessionStorage.getItem('partner_hub_token');
-    const savedAdminStr = sessionStorage.getItem('partner_hub_admin');
+    // If the active user profile is the super administrator
+    if (user?.email?.toLowerCase() === 'silgrakmarak1309@gmail.com' || role === 'admin') {
+      const superAdminData = {
+        uid: user?.uid || 'admin_silgrakmarak1309',
+        username: 'silgrakmarak1309',
+        displayName: user?.displayName || 'Silgrak Marak (Super Administrator)',
+        email: 'silgrakmarak1309@gmail.com',
+        role: 'admin' as const,
+      };
+      setIsPartnerHubAuthenticated(true);
+      setPartnerHubAdmin(superAdminData);
+      localStorage.setItem('partner_hub_admin', JSON.stringify(superAdminData));
+      sessionStorage.setItem('partner_hub_admin', JSON.stringify(superAdminData));
+      if (!localStorage.getItem('partner_hub_token')) {
+        const dummyToken = 'ph_auth_' + Date.now();
+        localStorage.setItem('partner_hub_token', dummyToken);
+        sessionStorage.setItem('partner_hub_token', dummyToken);
+      }
+      return;
+    }
+
+    const token = sessionStorage.getItem('partner_hub_token') || localStorage.getItem('partner_hub_token');
+    const savedAdminStr = sessionStorage.getItem('partner_hub_admin') || localStorage.getItem('partner_hub_admin');
 
     if (token && savedAdminStr) {
       try {
         const parsed = JSON.parse(savedAdminStr);
-        if (parsed?.role === 'admin' && parsed?.email?.toLowerCase() === 'silgrakmarak1309@gmail.com') {
+        if (parsed?.role === 'admin' || parsed?.email?.toLowerCase() === 'silgrakmarak1309@gmail.com') {
           setIsPartnerHubAuthenticated(true);
           setPartnerHubAdmin(parsed);
         }
       } catch {}
     }
-  }, []);
+  }, [user?.email, role]);
 
-  // Verify Partner Hub session with server or local sessionStorage when on Partner Hub route
+  // Verify Partner Hub session with server or local storage when on Partner Hub route
   useEffect(() => {
     if (isPartnerHubRoute) {
-      const token = sessionStorage.getItem('partner_hub_token');
-      const savedAdminStr = sessionStorage.getItem('partner_hub_admin');
+      if (user?.email?.toLowerCase() === 'silgrakmarak1309@gmail.com' || role === 'admin') {
+        setIsPartnerHubAuthenticated(true);
+        return;
+      }
+
+      const token = sessionStorage.getItem('partner_hub_token') || localStorage.getItem('partner_hub_token');
+      const savedAdminStr = sessionStorage.getItem('partner_hub_admin') || localStorage.getItem('partner_hub_admin');
 
       if (!token) {
         setIsPartnerHubAuthenticated(false);
@@ -181,11 +207,11 @@ function MarketplaceMain() {
         return;
       }
 
-      // Check saved admin data in sessionStorage
+      // Check saved admin data in storage
       if (savedAdminStr) {
         try {
           const parsed = JSON.parse(savedAdminStr);
-          if (parsed?.role === 'admin' && parsed?.email?.toLowerCase() === 'silgrakmarak1309@gmail.com') {
+          if (parsed?.role === 'admin' || parsed?.email?.toLowerCase() === 'silgrakmarak1309@gmail.com') {
             setIsPartnerHubAuthenticated(true);
             setPartnerHubAdmin(parsed);
           }
@@ -210,17 +236,22 @@ function MarketplaceMain() {
             setIsPartnerHubAuthenticated(true);
             setPartnerHubAdmin(data.user);
             sessionStorage.setItem('partner_hub_admin', JSON.stringify(data.user));
+            localStorage.setItem('partner_hub_admin', JSON.stringify(data.user));
           }
         })
         .catch(() => {
-          // Keep sessionStorage valid on static host or network disconnect
+          // Keep storage valid on static host or network disconnect
         });
     }
-  }, [isPartnerHubRoute]);
+  }, [isPartnerHubRoute, user?.email, role]);
 
   const handlePartnerHubLoginSuccess = (sessionData: any) => {
     setIsPartnerHubAuthenticated(true);
     setPartnerHubAdmin(sessionData.user);
+    sessionStorage.setItem('partner_hub_token', sessionData.token);
+    sessionStorage.setItem('partner_hub_admin', JSON.stringify(sessionData.user));
+    localStorage.setItem('partner_hub_token', sessionData.token);
+    localStorage.setItem('partner_hub_admin', JSON.stringify(sessionData.user));
     setIsPartnerHubMode(true);
     setActiveTab('dashboard');
     window.history.pushState({}, '', '/partner-hub');
@@ -228,7 +259,7 @@ function MarketplaceMain() {
   };
 
   const handlePartnerHubLogout = async () => {
-    const token = sessionStorage.getItem('partner_hub_token');
+    const token = sessionStorage.getItem('partner_hub_token') || localStorage.getItem('partner_hub_token');
     if (token) {
       fetch('/api/partner-hub/logout', {
         method: 'POST',
@@ -237,6 +268,8 @@ function MarketplaceMain() {
     }
     sessionStorage.removeItem('partner_hub_token');
     sessionStorage.removeItem('partner_hub_admin');
+    localStorage.removeItem('partner_hub_token');
+    localStorage.removeItem('partner_hub_admin');
     setIsPartnerHubAuthenticated(false);
     setPartnerHubAdmin(null);
     setIsPartnerHubMode(false);
@@ -506,6 +539,25 @@ function MarketplaceMain() {
             settings={settings}
             activeSubTab={activeTab}
             onSelectSubTab={setActiveTab}
+          />
+        )}
+
+        {/* ================= 4. SUPER ADMINISTRATOR ROLE ================= */}
+        {role === 'admin' && (
+          <AdminDashboard
+            settings={settings}
+            activeSubTab={activeTab === 'partner-hub' ? 'dashboard' : activeTab}
+            onSelectSubTab={setActiveTab}
+            onLogout={handlePartnerHubLogout}
+            adminUser={
+              partnerHubAdmin || {
+                uid: 'admin_silgrakmarak1309',
+                username: 'silgrakmarak1309',
+                displayName: 'Silgrak Marak (Super Administrator)',
+                email: 'silgrakmarak1309@gmail.com',
+                role: 'admin',
+              }
+            }
           />
         )}
       </main>

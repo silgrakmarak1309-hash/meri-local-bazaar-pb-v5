@@ -207,6 +207,20 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
     setAutoApprove(settings.autoApproveProducts);
   }, [settings]);
 
+  // Helper: checks whether an order requires Super Administrator payment verification
+  const isOrderPendingVerification = (o: Order): boolean => {
+    if (!o) return false;
+    if (o.orderStatus === 'cancelled' || o.orderStatus === 'delivered') return false;
+    if (o.paymentStatus === 'paid') return false;
+    return (
+      o.orderStatus === 'pending_verification' ||
+      o.orderStatus === 'pending' ||
+      o.paymentStatus === 'pending' ||
+      o.paymentStatus === 'unpaid' ||
+      Boolean(o.transactionId && String(o.transactionId).trim().length > 0)
+    );
+  };
+
   // Exact 12 Required Dashboard Statistics:
   const statTotalUsers = users.length || 4;
   const statTotalShops = shops.length;
@@ -222,6 +236,7 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
   const statPendingDeliveryPartnerPayouts = payouts.filter(
     (p) => p.requesterRole === 'delivery_partner' && p.status === 'pending'
   ).length;
+  const statPendingPaymentVerifications = orders.filter(isOrderPendingVerification).length;
 
   const handleTabClick = (tabId: string) => {
     setActiveTab(tabId);
@@ -273,9 +288,22 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
   const handleVerifyPayment = async (orderId: string) => {
     setActionLoading(`verify_${orderId}`);
     try {
+      // Optimistic instant UI update
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                orderStatus: 'confirmed',
+                paymentStatus: 'paid',
+                updatedAt: new Date().toISOString(),
+              }
+            : o
+        )
+      );
       await verifyOrderPayment(orderId);
       const refreshed = await fetchAllOrdersFromSupabase();
-      if (refreshed) setOrders(refreshed);
+      if (refreshed && refreshed.length > 0) setOrders(refreshed);
     } catch (e) {
       console.error('Failed to verify order payment:', e);
     } finally {
@@ -288,9 +316,22 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
     if (!reason) return;
     setActionLoading(`reject_${orderId}`);
     try {
+      // Optimistic instant UI update
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                orderStatus: 'cancelled',
+                paymentStatus: 'failed',
+                updatedAt: new Date().toISOString(),
+              }
+            : o
+        )
+      );
       await rejectOrderPayment(orderId, reason);
       const refreshed = await fetchAllOrdersFromSupabase();
-      if (refreshed) setOrders(refreshed);
+      if (refreshed && refreshed.length > 0) setOrders(refreshed);
     } catch (e) {
       console.error('Failed to reject order payment:', e);
     } finally {
@@ -462,7 +503,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
     { id: 'shops', label: 'Shops', badge: statPendingShopRegistrations || null },
     { id: 'products', label: 'Products', badge: statTotalProducts },
     { id: 'categories', label: 'Categories', badge: categories.length },
-    { id: 'orders', label: 'Orders', badge: statPendingOrders || null },
+    { id: 'orders', label: 'Orders', badge: statPendingPaymentVerifications || statPendingOrders || null },
     { id: 'delivery_partners', label: 'Delivery Partners', badge: statPendingDeliveryPartnerRegistrations || null },
     { id: 'delivery_assignments', label: 'Delivery Assignments', badge: assignments.length },
     { id: 'seller_wallets', label: 'Seller Wallets', badge: null },
@@ -579,20 +620,32 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
       {activeTab === 'dashboard' && (
         <div className="space-y-6">
           {/* Action Alerts */}
-          {(statPendingShopRegistrations > 0 ||
+          {(statPendingPaymentVerifications > 0 ||
+            statPendingShopRegistrations > 0 ||
             statPendingDeliveryPartnerRegistrations > 0 ||
             statPendingSellerPayouts > 0 ||
             statPendingDeliveryPartnerPayouts > 0) && (
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl shadow-2xs space-y-3">
-              <div className="flex items-center gap-2 text-amber-900 font-extrabold text-sm">
-                <AlertTriangle className="w-5 h-5 text-amber-600" />
+            <div className="p-4 bg-linear-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl shadow-xs space-y-3">
+              <div className="flex items-center gap-2 text-amber-950 font-extrabold text-sm">
+                <AlertTriangle className="w-5 h-5 text-amber-600 animate-pulse" />
                 <span>Pending Approvals & Administrative Actions Required</span>
               </div>
               <div className="flex flex-wrap gap-2 text-xs">
+                {statPendingPaymentVerifications > 0 && (
+                  <button
+                    onClick={() => {
+                      setOrderFilter('pending_verification');
+                      handleTabClick('orders');
+                    }}
+                    className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer animate-pulse transition"
+                  >
+                    ⏳ {statPendingPaymentVerifications} Orders Pending Payment Verification (Verify UTR)
+                  </button>
+                )}
                 {statPendingShopRegistrations > 0 && (
                   <button
                     onClick={() => handleTabClick('shops')}
-                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-xl font-bold hover:bg-amber-100 text-amber-900 shadow-2xs flex items-center gap-1.5"
+                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-xl font-bold hover:bg-amber-100 text-amber-900 shadow-2xs flex items-center gap-1.5 cursor-pointer"
                   >
                     🏬 {statPendingShopRegistrations} Pending Shop Registrations
                   </button>
@@ -600,7 +653,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                 {statPendingDeliveryPartnerRegistrations > 0 && (
                   <button
                     onClick={() => handleTabClick('delivery_partners')}
-                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-xl font-bold hover:bg-amber-100 text-amber-900 shadow-2xs flex items-center gap-1.5"
+                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-xl font-bold hover:bg-amber-100 text-amber-900 shadow-2xs flex items-center gap-1.5 cursor-pointer"
                   >
                     🛵 {statPendingDeliveryPartnerRegistrations} Pending Delivery Partner Registrations
                   </button>
@@ -608,7 +661,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                 {statPendingSellerPayouts > 0 && (
                   <button
                     onClick={() => handleTabClick('payout_requests')}
-                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-xl font-bold hover:bg-amber-100 text-amber-900 shadow-2xs flex items-center gap-1.5"
+                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-xl font-bold hover:bg-amber-100 text-amber-900 shadow-2xs flex items-center gap-1.5 cursor-pointer"
                   >
                     💳 {statPendingSellerPayouts} Pending Seller Payouts
                   </button>
@@ -616,7 +669,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                 {statPendingDeliveryPartnerPayouts > 0 && (
                   <button
                     onClick={() => handleTabClick('payout_requests')}
-                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-xl font-bold hover:bg-amber-100 text-amber-900 shadow-2xs flex items-center gap-1.5"
+                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-xl font-bold hover:bg-amber-100 text-amber-900 shadow-2xs flex items-center gap-1.5 cursor-pointer"
                   >
                     🛵 {statPendingDeliveryPartnerPayouts} Pending Delivery Partner Payouts
                   </button>
@@ -807,21 +860,65 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                 </button>
               </div>
               <div className="divide-y divide-slate-100 text-xs">
-                {orders.slice(0, 5).map((o) => (
-                  <div key={o.id} className="py-2.5 flex items-center justify-between gap-2">
-                    <div>
-                      <span className="font-bold text-slate-900">#{o.id}</span>
-                      <span className="text-slate-500 ml-2">{o.customerName}</span>
-                      <div className="text-[11px] text-slate-400">
-                        {o.items.length} items • OTP: <strong className="text-slate-700">{o.deliveryOtp}</strong>
+                {orders.slice(0, 6).map((o) => (
+                  <div key={o.id} className="py-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="font-bold text-slate-900">#{o.id}</span>
+                        <span className="text-slate-500 ml-2">{o.customerName}</span>
+                        <div className="text-[11px] text-slate-400">
+                          {o.items.length} items • OTP: <strong className="text-slate-700">{o.deliveryOtp}</strong>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-black text-slate-900">₹{o.totalAmount.toLocaleString('en-IN')}</div>
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                            isOrderPendingVerification(o)
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
+                              : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          {o.orderStatus.replace(/_/g, ' ')}
+                        </span>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="font-black text-slate-900">₹{o.totalAmount.toLocaleString('en-IN')}</div>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold uppercase">
-                        {o.orderStatus.replace(/_/g, ' ')}
-                      </span>
-                    </div>
+
+                    {/* Direct Quick Verify Payment Button on Dashboard Tab */}
+                    {isOrderPendingVerification(o) && (
+                      <div className="p-2.5 bg-linear-to-r from-amber-50 to-orange-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-950 text-xs">
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                            <span>Payment Verification Pending</span>
+                          </div>
+                          <div className="text-[11px] text-amber-900">
+                            Customer UTR:{' '}
+                            <code className="font-mono font-black text-xs bg-white px-1.5 py-0.2 rounded border border-amber-300 text-blue-900 inline-block">
+                              {o.transactionId || 'N/A'}
+                            </code>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => handleRejectPayment(o.id)}
+                            disabled={actionLoading === `reject_${o.id}` || actionLoading === `verify_${o.id}`}
+                            className="px-2.5 py-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-xs rounded-lg transition disabled:opacity-50 cursor-pointer"
+                          >
+                            Reject
+                          </button>
+                          <button
+                            onClick={() => handleVerifyPayment(o.id)}
+                            disabled={actionLoading === `verify_${o.id}` || actionLoading === `reject_${o.id}`}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-lg shadow-sm transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-200" />
+                            <span>{actionLoading === `verify_${o.id}` ? 'Verifying...' : 'Verify Payment & Confirm ✓'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1272,7 +1369,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
             >
               <span>⏳ Pending Verification</span>
               <span className="px-1.5 py-0.5 bg-white/90 text-slate-900 rounded-full text-[10px] font-black">
-                {orders.filter((o) => o.orderStatus === 'pending_verification' || o.orderStatus === 'pending' || o.paymentStatus === 'pending').length}
+                {orders.filter(isOrderPendingVerification).length}
               </span>
             </button>
             <button
@@ -1281,7 +1378,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                 orderFilter === 'active' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Confirmed & Active ({orders.filter((o) => o.orderStatus === 'confirmed' || o.orderStatus === 'processing' || o.orderStatus === 'packed' || o.orderStatus === 'ready_for_pickup' || o.orderStatus === 'picked_up' || o.orderStatus === 'out_for_delivery').length})
+              Confirmed & Active ({orders.filter((o) => !isOrderPendingVerification(o) && (o.orderStatus === 'confirmed' || o.orderStatus === 'processing' || o.orderStatus === 'packed' || o.orderStatus === 'ready_for_pickup' || o.orderStatus === 'picked_up' || o.orderStatus === 'out_for_delivery')).length})
             </button>
             <button
               onClick={() => setOrderFilter('delivered')}
@@ -1305,10 +1402,10 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
             {orders
               .filter((o) => {
                 if (orderFilter === 'pending_verification') {
-                  return o.orderStatus === 'pending_verification' || o.orderStatus === 'pending' || o.paymentStatus === 'pending';
+                  return isOrderPendingVerification(o);
                 }
                 if (orderFilter === 'active') {
-                  return o.orderStatus === 'confirmed' || o.orderStatus === 'processing' || o.orderStatus === 'packed' || o.orderStatus === 'ready_for_pickup' || o.orderStatus === 'picked_up' || o.orderStatus === 'out_for_delivery';
+                  return !isOrderPendingVerification(o) && (o.orderStatus === 'confirmed' || o.orderStatus === 'processing' || o.orderStatus === 'packed' || o.orderStatus === 'ready_for_pickup' || o.orderStatus === 'picked_up' || o.orderStatus === 'out_for_delivery');
                 }
                 if (orderFilter === 'delivered') return o.orderStatus === 'delivered';
                 if (orderFilter === 'cancelled') return o.orderStatus === 'cancelled';
@@ -1333,7 +1430,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                           ? 'bg-emerald-100 text-emerald-800'
                           : o.orderStatus === 'cancelled'
                           ? 'bg-red-100 text-red-800'
-                          : o.orderStatus === 'pending_verification' || o.orderStatus === 'pending'
+                          : isOrderPendingVerification(o)
                           ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
                           : 'bg-amber-100 text-amber-800'
                       }`}
@@ -1386,7 +1483,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                   ))}
                 </div>
 
-                {(o.orderStatus === 'pending_verification' || o.orderStatus === 'pending' || o.paymentStatus === 'pending') && (
+                {isOrderPendingVerification(o) && (
                   <div className="p-3.5 bg-linear-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">

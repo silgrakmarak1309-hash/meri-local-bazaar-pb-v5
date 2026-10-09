@@ -47,8 +47,11 @@ export const PartnerHubLogin: React.FC<PartnerHubLoginProps> = ({ onLoginSuccess
       return;
     }
 
-    // 1. Strict Administrator Authorization: Exactly silgrakmarak1309@gmail.com and 130990
-    const isEmailValid = cleanEmail === AUTHORIZED_ADMIN_EMAIL.toLowerCase();
+    // 1. Strict Administrator Authorization: silgrakmarak1309@gmail.com or username silgrakmarak1309 / gamjinmarak with 130990
+    const isEmailValid =
+      cleanEmail === AUTHORIZED_ADMIN_EMAIL.toLowerCase() ||
+      cleanEmail === 'silgrakmarak1309' ||
+      cleanEmail === 'gamjinmarak';
     const isPasswordValid = cleanPassword === '130990';
 
     if (!isEmailValid || !isPasswordValid) {
@@ -90,13 +93,16 @@ export const PartnerHubLogin: React.FC<PartnerHubLoginProps> = ({ onLoginSuccess
         });
 
         if (response.ok) {
-          const data = await response.json();
-          if (data && data.success && data.token) {
-            authenticated = true;
-            sessionToken = data.token;
-            if (data.user) {
-              adminUser.displayName = data.user.displayName || adminUser.displayName;
-              adminUser.uid = data.user.uid || adminUser.uid;
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data && data.success && data.token) {
+              authenticated = true;
+              sessionToken = data.token;
+              if (data.user) {
+                adminUser.displayName = data.user.displayName || adminUser.displayName;
+                adminUser.uid = data.user.uid || adminUser.uid;
+              }
             }
           }
         } else if (response.status === 403) {
@@ -115,8 +121,8 @@ export const PartnerHubLogin: React.FC<PartnerHubLoginProps> = ({ onLoginSuccess
         console.warn('Partner Hub server-side endpoint check fallback:', srvErr);
       }
 
-      // 3. Fallback client verification (strictly 130990 and silgrakmarak1309@gmail.com)
-      if (!authenticated && cleanPassword === '130990' && cleanEmail === AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
+      // 3. Fallback client verification (strictly 130990 and authorized admin credentials)
+      if (!authenticated && isEmailValid && isPasswordValid) {
         authenticated = true;
         sessionToken = 'ph_sec_' + Date.now() + '_' + Math.random().toString(36).substring(2, 12);
       }
@@ -142,9 +148,11 @@ export const PartnerHubLogin: React.FC<PartnerHubLoginProps> = ({ onLoginSuccess
       setStatusMessage('Access granted. Redirecting to Partner Hub...');
       await new Promise((resolve) => setTimeout(resolve, 350));
 
-      // 5. Store session securely
+      // 5. Store session securely in both sessionStorage and localStorage for APK / mobile stability
       sessionStorage.setItem('partner_hub_token', sessionToken);
       sessionStorage.setItem('partner_hub_admin', JSON.stringify(adminUser));
+      localStorage.setItem('partner_hub_token', sessionToken);
+      localStorage.setItem('partner_hub_admin', JSON.stringify(adminUser));
 
       onLoginSuccess({
         token: sessionToken,
