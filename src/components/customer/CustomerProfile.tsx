@@ -622,7 +622,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
                 <Store className="w-5 h-5 text-emerald-600" />
-                <span>{hasRegisteredShop ? 'Your Seller Hub' : 'Sell on BazaarX'}</span>
+                <span>{hasRegisteredShop ? 'Your Seller Hub' : 'Sell on Balpakram online store'}</span>
               </div>
               {hasRegisteredShop && (
                 <span className="text-[10px] bg-emerald-200 text-emerald-900 font-bold px-1.5 py-0.5 rounded">
@@ -697,7 +697,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
           className="w-full py-2.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs sm:text-sm rounded-xl border border-red-200 flex items-center justify-center gap-2 transition cursor-pointer"
         >
           <LogOut className="w-4 h-4" />
-          <span>Sign Out from BazaarX</span>
+          <span>Sign Out from Balpakram online store</span>
         </button>
       </div>
 

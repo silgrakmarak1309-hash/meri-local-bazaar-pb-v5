@@ -210,7 +210,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
         <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto text-2xl font-bold">
           🛵
         </div>
-        <h2 className="text-xl font-black text-slate-900">Become a BazaarX Delivery Partner</h2>
+        <h2 className="text-xl font-black text-slate-900">Become a Balpakram online store Delivery Partner</h2>
         <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto">
           Deliver local customer packages, earn on every order with real-time OTP validation, and withdraw earnings daily via UPI.
         </p>
@@ -692,7 +692,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                     </div>
 
                     <p className="text-xs text-emerald-800">
-                      Ask the customer for their 4-digit Delivery OTP shown in their BazaarX App.
+                      Ask the customer for their 4-digit Delivery OTP shown in their Balpakram online store App.
                     </p>
 
                     {otpError?.id === task.id && (

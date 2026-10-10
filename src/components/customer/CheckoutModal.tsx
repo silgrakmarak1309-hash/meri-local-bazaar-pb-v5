@@ -124,6 +124,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     ? singleBuyItem.discountPrice || singleBuyItem.price
     : cartSubtotal;
 
+  const MIN_ORDER_VALUE = 200;
+  const isBelowMinOrder = subtotal < MIN_ORDER_VALUE;
+  const remainingAmount = Math.max(0, MIN_ORDER_VALUE - subtotal);
+
   const deliveryFee = dynamicDeliveryFee;
   const platformFee = settings.platformFee;
   const totalAmount = subtotal + deliveryFee + platformFee;
@@ -374,6 +378,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       }
     }
 
+    // Strict Minimum Order Value restriction (₹200)
+    if (isBelowMinOrder) {
+      setErrorMsg(`Minimum order value is ₹200. Please add ₹${remainingAmount.toLocaleString('en-IN')} more to proceed.`);
+      return;
+    }
+
     // Strict 12-digit UPI UTR validation check
     if (paymentMethod === 'upi') {
       if (!/^\d{12}$/.test(upiUtr.trim())) {
@@ -394,7 +404,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       const order = await createOrder(
         user.uid,
         user.displayName || 'Customer',
-        user.email || 'customer@bazaarx.com',
+        user.email || 'customer@balpakram.com',
         user.phoneNumber || chosenAddress.phoneNumber,
         updatedAddress,
         checkoutItems,
@@ -761,7 +771,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs shrink-0 text-center">
                       <img
                         src={`https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=${encodeURIComponent(
-                          `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`BazaarX Order Payment`)}`
+                          `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`Balpakram online store Order Payment`)}`
                         )}`}
                         alt="UPI Payment QR Code"
                         className="w-24 h-24 sm:w-28 sm:h-28 mx-auto"
@@ -802,7 +812,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
                       <div className="pt-1">
                         <a
-                          href={`upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`BazaarX Order Payment`)}`}
+                          href={`upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiPayeeName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`Balpakram online store Order Payment`)}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-[#2874f0] hover:bg-blue-700 text-white font-bold rounded-lg text-xs transition shadow-2xs cursor-pointer"
@@ -945,6 +955,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <span>Total Payable</span>
               <span className="text-base text-[#2874f0]">₹{totalAmount.toLocaleString('en-IN')}</span>
             </div>
+
+            {/* Dynamic Minimum Order Warning */}
+            {isBelowMinOrder && (
+              <div className="mt-3 p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span className="font-semibold leading-tight">
+                  Minimum order value is ₹200. Please add ₹{remainingAmount.toLocaleString('en-IN')} more to proceed.
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -956,16 +976,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </div>
 
           <button
-            onClick={handlePlaceOrder}
+            onClick={!isBelowMinOrder ? handlePlaceOrder : undefined}
             disabled={
               loading ||
               !selectedAddressId ||
-              (paymentMethod === 'upi' && upiUtr.trim().length !== 12)
+              (paymentMethod === 'upi' && upiUtr.trim().length !== 12) ||
+              isBelowMinOrder
             }
             className={`min-h-[46px] px-5 sm:px-6 py-2.5 font-bold rounded-xl text-xs sm:text-sm shadow-md transition touch-manipulation active:scale-95 flex items-center justify-center gap-2 ${
               loading ||
               !selectedAddressId ||
-              (paymentMethod === 'upi' && upiUtr.trim().length !== 12)
+              (paymentMethod === 'upi' && upiUtr.trim().length !== 12) ||
+              isBelowMinOrder
                 ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-60'
                 : 'bg-[#fb641b] hover:bg-[#e85b17] text-white cursor-pointer'
             }`}

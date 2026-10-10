@@ -1,5 +1,5 @@
 // =========================================================================
-// REAL-TIME PUSH NOTIFICATION & SOUND ENGINE FOR BAZAARX
+// REAL-TIME PUSH NOTIFICATION & SOUND ENGINE FOR BALPAKRAM ONLINE STORE
 // Handles:
 // 1. Web Audio API synthesized alert chimes (Order chime & Delivery chime)
 // 2. Browser Device Push Notifications (Window Notification API + Service Worker)

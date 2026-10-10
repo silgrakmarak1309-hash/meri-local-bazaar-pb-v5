@@ -478,7 +478,7 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
 
   // Copy SQL script
   const handleCopySql = () => {
-    navigator.clipboard.writeText(`-- BAZAARX SUPABASE SETUP SCHEMA
+    navigator.clipboard.writeText(`-- BALPAKRAM ONLINE STORE SUPABASE SETUP SCHEMA
 -- Run in Supabase SQL Editor: https://supabase.com/dashboard/project/nnytbwjnhmhusrbfycju/sql
 CREATE TABLE IF NOT EXISTS public.settings (
   id TEXT PRIMARY KEY,
@@ -2208,58 +2208,78 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
 
             <form onSubmit={handleSaveSettings} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Seller Commission (%)</label>
-                <input
-                  type="number"
-                  value={sellerCommission}
-                  onChange={(e) => setSellerCommission(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
-                />
-                <span className="text-[10px] text-slate-400">Percentage deducted per seller order</span>
+                <label className="font-bold text-slate-800 block mb-1">Seller Commission (%)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={sellerCommission}
+                    onChange={(e) => setSellerCommission(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 bg-white text-slate-900 font-black text-sm border border-slate-300 rounded-xl shadow-2xs focus:bg-white focus:text-slate-900 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 focus:outline-none active:text-slate-900 disabled:text-slate-900 disabled:bg-slate-100 placeholder:text-slate-400 transition"
+                    style={{ color: '#0f172a', backgroundColor: '#ffffff', colorScheme: 'light' }}
+                  />
+                  <span className="absolute right-3.5 top-2.5 text-slate-500 font-bold pointer-events-none text-xs">%</span>
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1 block">Percentage deducted per seller order</span>
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Platform Fee (₹)</label>
-                <input
-                  type="number"
-                  value={platformFee}
-                  onChange={(e) => setPlatformFee(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
-                />
-                <span className="text-[10px] text-slate-400">Customer checkout convenience fee</span>
+                <label className="font-bold text-slate-800 block mb-1">Platform Fee (₹)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={platformFee}
+                    onChange={(e) => setPlatformFee(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 bg-white text-slate-900 font-black text-sm border border-slate-300 rounded-xl shadow-2xs focus:bg-white focus:text-slate-900 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 focus:outline-none active:text-slate-900 disabled:text-slate-900 disabled:bg-slate-100 placeholder:text-slate-400 transition"
+                    style={{ color: '#0f172a', backgroundColor: '#ffffff', colorScheme: 'light' }}
+                  />
+                  <span className="absolute right-3.5 top-2.5 text-slate-500 font-bold pointer-events-none text-xs">₹</span>
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1 block">Customer checkout convenience fee</span>
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Customer Delivery Charge (₹)</label>
-                <input
-                  type="number"
-                  value={deliveryCharge}
-                  onChange={(e) => setDeliveryCharge(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
-                />
-                <span className="text-[10px] text-slate-400">Base shipping charged to customer</span>
+                <label className="font-bold text-slate-800 block mb-1">Customer Delivery Charge (₹)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={deliveryCharge}
+                    onChange={(e) => setDeliveryCharge(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 bg-white text-slate-900 font-black text-sm border border-slate-300 rounded-xl shadow-2xs focus:bg-white focus:text-slate-900 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 focus:outline-none active:text-slate-900 disabled:text-slate-900 disabled:bg-slate-100 placeholder:text-slate-400 transition"
+                    style={{ color: '#0f172a', backgroundColor: '#ffffff', colorScheme: 'light' }}
+                  />
+                  <span className="absolute right-3.5 top-2.5 text-slate-500 font-bold pointer-events-none text-xs">₹</span>
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1 block">Base shipping charged to customer</span>
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Delivery Partner Earning (₹/Order)</label>
-                <input
-                  type="number"
-                  value={partnerEarning}
-                  onChange={(e) => setPartnerEarning(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold text-emerald-700"
-                />
-                <span className="text-[10px] text-slate-400">Credited to rider wallet upon OTP delivery</span>
+                <label className="font-bold text-slate-800 block mb-1">Delivery Partner Earning (₹/Order)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={partnerEarning}
+                    onChange={(e) => setPartnerEarning(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 bg-white text-slate-900 font-black text-sm border border-slate-300 rounded-xl shadow-2xs focus:bg-white focus:text-slate-900 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 focus:outline-none active:text-slate-900 disabled:text-slate-900 disabled:bg-slate-100 placeholder:text-slate-400 transition"
+                    style={{ color: '#0f172a', backgroundColor: '#ffffff', colorScheme: 'light' }}
+                  />
+                  <span className="absolute right-3.5 top-2.5 text-slate-500 font-bold pointer-events-none text-xs">₹</span>
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1 block">Credited to rider wallet upon OTP delivery</span>
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Minimum Payout Amount (₹)</label>
-                <input
-                  type="number"
-                  value={minPayout}
-                  onChange={(e) => setMinPayout(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
-                />
-                <span className="text-[10px] text-slate-400">Minimum threshold for withdrawal request</span>
+                <label className="font-bold text-slate-800 block mb-1">Minimum Payout Amount (₹)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={minPayout}
+                    onChange={(e) => setMinPayout(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 bg-white text-slate-900 font-black text-sm border border-slate-300 rounded-xl shadow-2xs focus:bg-white focus:text-slate-900 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 focus:outline-none active:text-slate-900 disabled:text-slate-900 disabled:bg-slate-100 placeholder:text-slate-400 transition"
+                    style={{ color: '#0f172a', backgroundColor: '#ffffff', colorScheme: 'light' }}
+                  />
+                  <span className="absolute right-3.5 top-2.5 text-slate-500 font-bold pointer-events-none text-xs">₹</span>
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1 block">Minimum threshold for withdrawal request</span>
               </div>
 
               <div className="flex flex-col justify-center space-y-2 pt-2">

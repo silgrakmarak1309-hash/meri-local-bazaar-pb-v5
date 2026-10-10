@@ -240,7 +240,7 @@ export const PostProductAdModal: React.FC<PostProductAdModalProps> = ({
       // Direct insert into Supabase public.products table
       await saveProduct(newProduct);
 
-      setSuccessMessage('Product Ad successfully posted to BazaarX and saved in Supabase!');
+      setSuccessMessage('Product Ad successfully posted to Balpakram online store and saved in Supabase!');
       if (onProductCreated) {
         onProductCreated(newProduct);
       }
@@ -268,7 +268,7 @@ export const PostProductAdModal: React.FC<PostProductAdModalProps> = ({
             <div>
               <h2 className="text-base sm:text-lg font-bold">Post Ad / Product Listing</h2>
               <p className="text-xs text-emerald-100">
-                Publish a new item for local shoppers on BazaarX Marketplace
+                Publish a new item for local shoppers on Balpakram online store
               </p>
             </div>
           </div>

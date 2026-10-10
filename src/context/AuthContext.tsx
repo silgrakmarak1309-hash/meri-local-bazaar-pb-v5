@@ -156,7 +156,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Fallback local profile if offline
       const fallback: UserProfile = {
         uid: fbUser.uid,
-        email: fbUser.email || 'user@bazaarx.com',
+        email: fbUser.email || 'user@balpakram.com',
         displayName: fbUser.displayName || 'User',
         role: requestedRole || 'customer',
         createdAt: new Date().toISOString(),
@@ -335,7 +335,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         (err.message && err.message.includes('operation-not-allowed'))
       ) {
         // Fallback for preview / demo environment
-        const googleEmail = 'customer@bazaarx.in';
+        const googleEmail = 'customer@balpakram.in';
         const uid = getDeterministicUid(googleEmail);
         const userRef = doc(db, 'users', uid);
         const snap = await getDoc(userRef);
@@ -455,7 +455,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       },
       seller: {
         uid: 'seller_registered_uid',
-        email: 'seller@bazaarx.com',
+        email: 'seller@balpakram.com',
         displayName: 'New Registered Seller',
         role: 'seller',
         phoneNumber: '+91 98765 43210',

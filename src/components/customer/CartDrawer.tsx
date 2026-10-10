@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Trash2, Plus, Minus, ShoppingBag, ShieldCheck, ArrowRight } from 'lucide-react';
+import { X, Trash2, Plus, Minus, ShoppingBag, ShieldCheck, ArrowRight, AlertCircle } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
 import { PlatformSettings } from '../../types';
 
@@ -25,6 +25,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const deliveryFee = settings.deliveryBaseCharge;
   const platformFee = settings.platformFee;
   const finalPayable = subtotal > 0 ? subtotal + deliveryFee + platformFee : 0;
+
+  const MIN_ORDER_VALUE = 200;
+  const isBelowMinOrder = subtotal < MIN_ORDER_VALUE;
+  const remainingAmount = Math.max(0, MIN_ORDER_VALUE - subtotal);
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -183,21 +187,39 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
           {/* Footer Checkout Bar */}
           {items.length > 0 && (
-            <div className="p-3.5 bg-white border-t border-slate-200 flex items-center justify-between gap-3 shadow-lg pb-[max(0.875rem,env(safe-area-inset-bottom))]">
-              <div className="shrink-0">
-                <div className="text-[10px] text-slate-400">Total Payable</div>
-                <div className="text-base font-black text-slate-900">
-                  ₹{finalPayable.toLocaleString('en-IN')}
+            <div className="p-3.5 bg-white border-t border-slate-200 space-y-2.5 shadow-lg pb-[max(0.875rem,env(safe-area-inset-bottom))]">
+              {/* Dynamic ₹200 Minimum Order Warning */}
+              {isBelowMinOrder && (
+                <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs flex items-center gap-2 shadow-2xs animate-in fade-in duration-150">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span className="font-semibold leading-tight">
+                    Minimum order value is ₹200. Please add ₹{remainingAmount.toLocaleString('en-IN')} more to proceed.
+                  </span>
                 </div>
-              </div>
+              )}
 
-              <button
-                onClick={onCheckout}
-                className="flex-1 min-h-[46px] py-2.5 px-4 bg-[#fb641b] hover:bg-[#e85b17] text-white font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-md cursor-pointer touch-manipulation active:scale-95"
-              >
-                <span>Proceed to Checkout</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              <div className="flex items-center justify-between gap-3">
+                <div className="shrink-0">
+                  <div className="text-[10px] text-slate-400">Total Payable</div>
+                  <div className="text-base font-black text-slate-900">
+                    ₹{finalPayable.toLocaleString('en-IN')}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={!isBelowMinOrder ? onCheckout : undefined}
+                  disabled={isBelowMinOrder}
+                  className={`flex-1 min-h-[46px] py-2.5 px-4 font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-md touch-manipulation ${
+                    isBelowMinOrder
+                      ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-75 shadow-none pointer-events-none'
+                      : 'bg-[#fb641b] hover:bg-[#e85b17] text-white cursor-pointer active:scale-95'
+                  }`}
+                >
+                  <span>Proceed to Checkout</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
         </div>

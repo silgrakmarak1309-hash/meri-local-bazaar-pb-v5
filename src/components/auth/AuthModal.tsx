@@ -89,7 +89,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <X className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-2">
-            <span className="text-2xl font-black italic">Bazaar<span className="text-yellow-400">X</span></span>
+            <span className="text-xl sm:text-2xl font-black">
+              Balpakram <span className="text-yellow-300 font-extrabold">online store</span>
+            </span>
             <span className="text-[10px] bg-yellow-400 text-blue-900 font-extrabold px-1.5 py-0.5 rounded uppercase">
               Secure Access
             </span>

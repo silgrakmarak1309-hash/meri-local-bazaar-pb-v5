@@ -1093,7 +1093,7 @@ export async function updateShopStatus(shopId: string, status: Shop['status'], r
       title: status === 'approved' ? 'Shop Approved!' : status === 'rejected' ? 'Shop Registration Update' : 'Shop Status Changed',
       message:
         status === 'approved'
-          ? `Congratulations! Your shop ${shop.shopName} has been approved to sell on BazaarX.`
+          ? `Congratulations! Your shop ${shop.shopName} has been approved to sell on Balpakram online store.`
           : `Your shop ${shop.shopName} is now ${status}.${rejectionReason ? ` Reason: ${rejectionReason}` : ''}`,
       type: 'approval',
       referenceId: shopId,

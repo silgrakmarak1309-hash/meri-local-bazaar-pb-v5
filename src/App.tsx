@@ -42,7 +42,7 @@ import {
 
 function MarketplaceMain() {
   const { user, role, switchRole, hasRegisteredShop, hasRegisteredDelivery } = useAuth();
-  const { clearCart } = useCart();
+  const { clearCart, subtotal, addToCart } = useCart();
 
   // Firestore Real-Time State
   const [products, setProducts] = useState<Product[]>([]);
@@ -348,6 +348,13 @@ function MarketplaceMain() {
   const unreadNotifsCount = notifications.filter((n) => !n.isRead).length;
 
   const handleBuyNow = (product: Product) => {
+    const effectivePrice = product.discountPrice || product.price;
+    // Strict minimum order value restriction (₹200)
+    if (effectivePrice < 200) {
+      addToCart(product, 1);
+      setIsCartOpen(true);
+      return;
+    }
     if (!user) {
       setIsAuthModalOpen(true);
       return;
@@ -357,6 +364,11 @@ function MarketplaceMain() {
   };
 
   const handleProceedCheckoutFromCart = () => {
+    // Strict minimum order value restriction (₹200)
+    if (subtotal < 200) {
+      setIsCartOpen(true);
+      return;
+    }
     if (!user) {
       setIsAuthModalOpen(true);
       return;

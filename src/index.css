@@ -9,6 +9,11 @@
     text-rendering: optimizeLegibility;
   }
 
+  /* Force light color-scheme for inputs to prevent browser/webview dark mode from making input text white */
+  input, select, textarea {
+    color-scheme: light;
+  }
+
   /* Safe area inset support for modern mobile devices (notches & home bars) */
   body {
     padding-bottom: env(safe-area-inset-bottom, 0px);

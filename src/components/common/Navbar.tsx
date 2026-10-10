@@ -63,17 +63,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={() => onSelectTab('home')}
             className="flex flex-col items-start cursor-pointer select-none group touch-manipulation"
           >
-            <div className="flex items-center gap-1">
-              <span className="text-xl sm:text-2xl font-black italic tracking-wide text-white">
-                Bazaar<span className="text-yellow-400">X</span>
-              </span>
-              <span className="text-[10px] bg-yellow-400 text-blue-900 font-extrabold px-1.5 py-0.2 rounded-sm uppercase tracking-wider">
-                PLUS
+            <div className="flex items-center gap-1.5">
+              <span className="text-lg sm:text-2xl font-black tracking-tight text-white flex items-center gap-1">
+                <span>Balpakram</span>
+                <span className="text-yellow-300 font-extrabold text-xs sm:text-sm uppercase tracking-wide bg-blue-800/80 px-1.5 py-0.5 rounded border border-blue-400/30">
+                  online store
+                </span>
               </span>
             </div>
-            <span className="text-[10px] text-blue-200 -mt-1 group-hover:text-yellow-200 flex items-center gap-1 font-medium">
-              <span>Explore</span>
-              <span className="text-yellow-300 font-bold">Plus ⭐</span>
+            <span className="text-[10px] text-blue-200 -mt-0.5 group-hover:text-yellow-200 flex items-center gap-1 font-medium">
+              <span>Fast & Local Delivery ⭐</span>
             </span>
           </div>
 

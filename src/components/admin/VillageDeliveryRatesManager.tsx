@@ -301,12 +301,13 @@ export const VillageDeliveryRatesManager: React.FC<VillageDeliveryRatesManagerPr
                       placeholder="e.g. Babukona Village"
                       value={row.villageName}
                       onChange={(e) => handleRowChange(idx, 'villageName', e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs outline-none focus:border-indigo-600 font-medium"
+                      className="w-full px-2.5 py-1.5 bg-white text-slate-900 border border-slate-300 rounded-lg text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 focus:text-slate-900 focus:bg-white font-bold placeholder:text-slate-400"
+                      style={{ color: '#0f172a', backgroundColor: '#ffffff', colorScheme: 'light' }}
                     />
                   </td>
                   <td className="px-3 py-2">
                     <div className="relative">
-                      <span className="absolute left-2.5 top-1.5 text-slate-400 font-bold">₹</span>
+                      <span className="absolute left-2.5 top-1.5 text-slate-500 font-bold">₹</span>
                       <input
                         type="number"
                         min={0}
@@ -314,7 +315,8 @@ export const VillageDeliveryRatesManager: React.FC<VillageDeliveryRatesManagerPr
                         placeholder="10"
                         value={row.deliveryCharge}
                         onChange={(e) => handleRowChange(idx, 'deliveryCharge', e.target.value)}
-                        className="w-full pl-6 pr-2.5 py-1.5 border border-slate-300 rounded-lg text-xs outline-none focus:border-indigo-600 font-bold text-emerald-800"
+                        className="w-full pl-6 pr-2.5 py-1.5 bg-white text-slate-900 border border-slate-300 rounded-lg text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 focus:text-slate-900 focus:bg-white font-black"
+                        style={{ color: '#0f172a', backgroundColor: '#ffffff', colorScheme: 'light' }}
                       />
                     </div>
                   </td>

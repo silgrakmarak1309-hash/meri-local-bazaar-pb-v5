@@ -116,7 +116,7 @@ export const SellerRegistrationModal: React.FC<SellerRegistrationModalProps> = (
             <Store className="w-6 h-6 text-yellow-300" />
             <div>
               <h2 className="text-base sm:text-lg font-bold">Register Your Shop / Business</h2>
-              <p className="text-xs text-emerald-100">Sell on BazaarX and scale your retail business</p>
+              <p className="text-xs text-emerald-100">Sell on Balpakram online store and scale your retail business</p>
             </div>
           </div>
           <button
