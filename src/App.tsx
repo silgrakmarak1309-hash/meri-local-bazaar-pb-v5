@@ -116,6 +116,14 @@ function MarketplaceMain() {
     setCurrentPath('/partner-hub');
   };
 
+  const handleSelectTab = (tab: string) => {
+    setActiveTab(tab);
+    if (tab === 'home') {
+      setSelectedCategory(null);
+      setSearchQuery('');
+    }
+  };
+
   // Strict Profile Bypass: If user already has an active delivery profile, bypass registration modal
   useEffect(() => {
     if (isDeliveryRegOpen && hasRegisteredDelivery) {
@@ -423,7 +431,7 @@ function MarketplaceMain() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={handleSelectTab}
         isPartnerHubAuthenticated={isPartnerHubAuthenticated}
         onNavigateToPartnerHub={navigateToPartnerHub}
       />
@@ -443,7 +451,7 @@ function MarketplaceMain() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-2 sm:p-4">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-2 sm:p-4 pb-20 md:pb-6">
         {/* ================= 1. CUSTOMER ROLE ================= */}
         {role === 'customer' && (
           <div>
@@ -575,7 +583,7 @@ function MarketplaceMain() {
       </main>
 
       {/* Mobile Bottom Navigation */}
-      <BottomNav activeTab={activeTab} onSelectTab={setActiveTab} />
+      <BottomNav activeTab={activeTab} onSelectTab={handleSelectTab} />
 
       {/* Global Modals & Drawers */}
       <AuthModal

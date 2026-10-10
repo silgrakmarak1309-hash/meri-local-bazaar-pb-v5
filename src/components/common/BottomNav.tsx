@@ -2,7 +2,6 @@ import React from 'react';
 import {
   Home,
   Grid,
-  ShoppingCart,
   Package,
   User,
   LayoutDashboard,
@@ -10,15 +9,12 @@ import {
   Wallet,
   Store,
   Bike,
-  CheckCircle2,
   TrendingUp,
   Settings,
-  Users,
   CreditCard,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
-import { UserRole } from '../../types';
 
 interface BottomNavProps {
   activeTab: string;
@@ -30,14 +26,14 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onSelectTab }) 
   const { itemCount } = useCart();
 
   // Navigation tabs definition based on role
+  // For mobile customer view: strictly 4 essential buttons (Home, Categories, My Orders, Account)
   const getNavItems = () => {
     switch (role) {
       case 'customer':
         return [
           { id: 'home', label: 'Home', icon: Home },
           { id: 'categories', label: 'Categories', icon: Grid },
-          { id: 'cart', label: 'Cart', icon: ShoppingCart, badge: itemCount },
-          { id: 'orders', label: 'Orders', icon: Package },
+          { id: 'orders', label: 'My Orders', icon: Package },
           { id: 'profile', label: 'Account', icon: User },
         ];
       case 'seller':
@@ -65,35 +61,51 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onSelectTab }) 
           { id: 'payouts', label: 'Payouts', icon: CreditCard },
           { id: 'settings', label: 'Settings', icon: Settings },
         ];
+      default:
+        return [
+          { id: 'home', label: 'Home', icon: Home },
+          { id: 'categories', label: 'Categories', icon: Grid },
+          { id: 'orders', label: 'My Orders', icon: Package },
+          { id: 'profile', label: 'Account', icon: User },
+        ];
     }
   };
 
   const navItems = getNavItems();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 shadow-lg px-2 py-1 flex items-center justify-around md:hidden pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-slate-200/90 shadow-[0_-4px_20px_rgba(0,0,0,0.07)] px-2 py-1 flex items-center justify-around md:hidden pb-[max(0.5rem,env(safe-area-inset-bottom))] transition-all">
       {navItems.map((item) => {
         const Icon = item.icon;
         const isActive = activeTab === item.id;
         return (
           <button
             key={item.id}
+            type="button"
             onClick={() => onSelectTab(item.id)}
-            className={`flex flex-col items-center justify-center py-2 px-3 min-w-[54px] min-h-[48px] relative transition active:scale-95 cursor-pointer touch-manipulation ${
+            className={`flex-1 flex flex-col items-center justify-center py-1 px-1 min-h-[50px] relative transition-all duration-150 active:scale-95 cursor-pointer touch-manipulation select-none ${
               isActive
                 ? 'text-[#2874f0] font-bold'
-                : 'text-slate-500 hover:text-slate-700'
+                : 'text-slate-500 hover:text-slate-800'
             }`}
           >
-            <div className="relative">
-              <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-2'}`} />
-              {Boolean(item.badge && item.badge > 0) && (
-                <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[10px] font-extrabold rounded-full px-1 min-w-4 text-center shadow-xs">
-                  {item.badge}
-                </span>
-              )}
+            <div className="relative flex items-center justify-center">
+              <Icon
+                className={`w-5 h-5 transition-transform duration-150 ${
+                  isActive ? 'stroke-[2.5] scale-110 text-[#2874f0]' : 'stroke-2'
+                }`}
+              />
             </div>
-            <span className="text-[10px] mt-0.5 tracking-tight">{item.label}</span>
+            <span
+              className={`text-[11px] mt-1 tracking-tight truncate max-w-[76px] ${
+                isActive ? 'font-bold text-[#2874f0]' : 'font-medium text-slate-600'
+              }`}
+            >
+              {item.label}
+            </span>
+            {isActive && (
+              <span className="absolute bottom-0 w-8 h-0.5 bg-[#2874f0] rounded-full" />
+            )}
           </button>
         );
       })}
