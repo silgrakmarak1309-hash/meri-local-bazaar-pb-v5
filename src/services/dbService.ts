@@ -1,0 +1,3839 @@
+import {
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  onSnapshot,
+} from 'firebase/firestore';
+import { db } from '../firebase';
+import {
+  Product,
+  Category,
+  Shop,
+  Order,
+  SellerOrder,
+  DeliveryPartner,
+  DeliveryAssignment,
+  Wallet,
+  WalletTransaction,
+  PayoutRequest,
+  AppNotification,
+  PlatformSettings,
+  Address,
+  OrderItem,
+  OrderStatus,
+  PaymentStatus,
+  AssignmentStatus,
+  PayoutStatus,
+  UserProfile,
+  UserRole,
+  VillageDeliveryRate,
+} from '../types';
+import { supabase } from '../supabase';
+
+// Safe unique Supabase Realtime channel generator
+// Completely prevents "Uncaught Error: cannot add postgres_changes callbacks for ... after subscribe()"
+let channelCounter = 0;
+export function createRealtimeChannel(prefix: string) {
+  channelCounter++;
+  const cleanPrefix = String(prefix).replace(/[^a-zA-Z0-9_-]/g, "_");
+  const uniqueName = `rt_${cleanPrefix}_${Date.now()}_${channelCounter}_${Math.random().toString(36).substring(2, 7)}`;
+  return supabase.channel(uniqueName);
+}
+
+
+// =========================================================================
+// DATA MAPPERS: TypeScript CamelCase <-> PostgreSQL SnakeCase
+// =========================================================================
+
+export function mapShopFromDb(row: any): Shop {
+  return {
+    id: row.id,
+    ownerId: row.owner_id || '',
+    shopName: row.shop_name || '',
+    ownerName: row.owner_name || '',
+    email: row.email || '',
+    phoneNumber: row.phone_number || '',
+    shopAddress: row.shop_address || '',
+    city: row.city || '',
+    state: row.state || '',
+    postalCode: row.postal_code || '',
+    servicePinCode: row.service_pin_code || row.postal_code || '',
+    category: row.category || '',
+    description: row.description || '',
+    logoUrl: row.logo_url || undefined,
+    panNumber: row.pan_number || undefined,
+    bankDetails: row.bank_details || {
+      accountHolderName: '',
+      accountNumber: '',
+      ifsc: '',
+      upiId: '',
+    },
+    status: row.status || 'pending_approval',
+    rating: Number(row.rating) || 4.8,
+    totalProducts: Number(row.total_products) || 0,
+    totalSales: Number(row.total_sales) || 0,
+    createdAt: row.created_at || new Date().toISOString(),
+    rejectionReason: row.rejection_reason || undefined,
+  };
+}
+
+export function mapShopToDb(shop: Partial<Shop>): any {
+  const data: any = {};
+  if (shop.id !== undefined) data.id = shop.id;
+  if (shop.ownerId !== undefined) data.owner_id = shop.ownerId;
+  if (shop.shopName !== undefined) data.shop_name = shop.shopName;
+  if (shop.ownerName !== undefined) data.owner_name = shop.ownerName;
+  if (shop.email !== undefined) data.email = shop.email;
+  if (shop.phoneNumber !== undefined) data.phone_number = shop.phoneNumber;
+  if (shop.shopAddress !== undefined) data.shop_address = shop.shopAddress;
+  if (shop.city !== undefined) data.city = shop.city;
+  if (shop.state !== undefined) data.state = shop.state;
+  if (shop.postalCode !== undefined) data.postal_code = shop.postalCode;
+  if (shop.servicePinCode !== undefined) data.service_pin_code = shop.servicePinCode;
+  if (shop.category !== undefined) data.category = shop.category;
+  if (shop.description !== undefined) data.description = shop.description;
+  if (shop.logoUrl !== undefined) data.logo_url = shop.logoUrl;
+  if (shop.panNumber !== undefined) data.pan_number = shop.panNumber;
+  if (shop.bankDetails !== undefined) data.bank_details = shop.bankDetails;
+  if (shop.status !== undefined) data.status = shop.status;
+  if (shop.rating !== undefined) data.rating = shop.rating;
+  if (shop.totalProducts !== undefined) data.total_products = shop.totalProducts;
+  if (shop.totalSales !== undefined) data.total_sales = shop.totalSales;
+  if (shop.rejectionReason !== undefined) data.rejection_reason = shop.rejectionReason;
+  data.updated_at = new Date().toISOString();
+  return data;
+}
+
+export function mapProductFromDb(row: any): Product {
+  const specs = row.specifications || {};
+  const targetPinCode =
+    row.target_pin_code ||
+    specs.targetPinCode ||
+    specs._delivery_pricing?.targetPinCode ||
+    row.seller_pin_code ||
+    '';
+  const villageDeliveryRates = Array.isArray(row.village_delivery_rates)
+    ? row.village_delivery_rates
+    : Array.isArray(specs.villageDeliveryRates)
+    ? specs.villageDeliveryRates
+    : Array.isArray(specs._delivery_pricing?.villageDeliveryRates)
+    ? specs._delivery_pricing.villageDeliveryRates
+    : [];
+
+  return {
+    id: row.id,
+    shopId: row.shop_id || '',
+    shopName: row.shop_name || '',
+    name: row.name || '',
+    category: row.category || '',
+    description: row.description || '',
+    price: Number(row.price) || 0,
+    discountPrice: Number(row.discount_price) || Number(row.price) || 0,
+    stock: Number(row.stock) || 0,
+    sku: row.sku || undefined,
+    images: Array.isArray(row.images) ? row.images : [],
+    specifications: specs,
+    isActive: row.is_active !== false,
+    isApproved: row.is_approved !== false,
+    deliveryAvailable: row.delivery_available !== false,
+    rating: Number(row.rating) || 4.5,
+    reviewCount: Number(row.review_count) || 0,
+    sellerPinCode: row.seller_pin_code || '',
+    shopPinCode: row.shop_pin_code || '',
+    targetPinCode,
+    villageDeliveryRates,
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+}
+
+export function mapProductToDb(p: Partial<Product>): any {
+  const data: any = {};
+  if (p.id !== undefined) data.id = p.id;
+  if (p.shopId !== undefined) data.shop_id = p.shopId;
+  if (p.shopName !== undefined) data.shop_name = p.shopName;
+  if (p.name !== undefined) data.name = p.name;
+  if (p.category !== undefined) data.category = p.category;
+  if (p.description !== undefined) data.description = p.description;
+  if (p.price !== undefined) data.price = p.price;
+  if (p.discountPrice !== undefined) data.discount_price = p.discountPrice;
+  if (p.stock !== undefined) data.stock = p.stock;
+  if (p.sku !== undefined) data.sku = p.sku;
+  if (p.images !== undefined) data.images = p.images;
+
+  // Persist specifications and delivery charges by location in JSONB specifications column
+  const specs: Record<string, any> = { ...(p.specifications || {}) };
+  if (p.targetPinCode !== undefined) {
+    specs.targetPinCode = p.targetPinCode;
+  }
+  if (p.villageDeliveryRates !== undefined) {
+    specs.villageDeliveryRates = p.villageDeliveryRates;
+  }
+  data.specifications = specs;
+
+  if (p.isActive !== undefined) data.is_active = p.isActive;
+  if (p.isApproved !== undefined) data.is_approved = p.isApproved;
+  if (p.deliveryAvailable !== undefined) data.delivery_available = p.deliveryAvailable;
+  if (p.rating !== undefined) data.rating = p.rating;
+  if (p.reviewCount !== undefined) data.review_count = p.reviewCount;
+  if (p.sellerPinCode !== undefined) data.seller_pin_code = p.sellerPinCode;
+  if (p.shopPinCode !== undefined) data.shop_pin_code = p.shopPinCode;
+  data.updated_at = new Date().toISOString();
+  return data;
+}
+
+export function mapOrderFromDb(row: any): Order {
+  const rawStatus = row.order_status || row.status;
+  const rawPaymentStatus = row.payment_status;
+  const hasUtr = Boolean(row.transaction_id && String(row.transaction_id).trim().length > 0);
+
+  // If order status is not explicitly set, determine based on payment and UTR
+  let resolvedOrderStatus: OrderStatus = 'pending_verification';
+  if (rawStatus) {
+    resolvedOrderStatus = rawStatus;
+  } else if (!hasUtr && rawPaymentStatus === 'paid') {
+    resolvedOrderStatus = 'confirmed';
+  }
+
+  let resolvedPaymentStatus: PaymentStatus = 'pending';
+  if (rawPaymentStatus) {
+    resolvedPaymentStatus = rawPaymentStatus;
+  } else if (resolvedOrderStatus === 'confirmed' || resolvedOrderStatus === 'delivered') {
+    resolvedPaymentStatus = 'paid';
+  }
+
+  return {
+    id: row.id,
+    customerId: row.customer_id || '',
+    customerName: row.customer_name || '',
+    customerEmail: row.customer_email || '',
+    customerPhone: row.customer_phone || '',
+    deliveryAddress: row.delivery_address || ({} as Address),
+    deliveryVillage: row.delivery_village || row.delivery_address?.village || undefined,
+    totalAmount: Number(row.total_amount) || 0,
+    subtotal: Number(row.subtotal) || 0,
+    deliveryCharge: Number(row.delivery_charge) || 0,
+    platformFee: Number(row.platform_fee) || 0,
+    paymentMethod: row.payment_method || 'upi',
+    paymentStatus: resolvedPaymentStatus,
+    orderStatus: resolvedOrderStatus,
+    transactionId: row.transaction_id || undefined,
+    deliveryPartnerId: row.delivery_partner_id || undefined,
+    deliveryPartnerName: row.delivery_partner_name || undefined,
+    deliveryPartnerPhone: row.delivery_partner_phone || undefined,
+    deliveryOtp: row.delivery_otp || '',
+    items: Array.isArray(row.items) ? row.items : [],
+    sellerIds: Array.isArray(row.seller_ids) ? row.seller_ids : [],
+    statusHistory: Array.isArray(row.status_history) ? row.status_history : [],
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
+
+export function mapOrderToDb(o: Partial<Order>): any {
+  const data: any = {};
+  if (o.id !== undefined) data.id = o.id;
+  if (o.customerId !== undefined) data.customer_id = o.customerId;
+  if (o.customerName !== undefined) data.customer_name = o.customerName;
+  if (o.customerEmail !== undefined) data.customer_email = o.customerEmail;
+  if (o.customerPhone !== undefined) data.customer_phone = o.customerPhone;
+  if (o.deliveryAddress !== undefined) data.delivery_address = o.deliveryAddress;
+  if (o.deliveryVillage !== undefined) data.delivery_village = o.deliveryVillage;
+  if (o.totalAmount !== undefined) data.total_amount = o.totalAmount;
+  if (o.subtotal !== undefined) data.subtotal = o.subtotal;
+  if (o.deliveryCharge !== undefined) data.delivery_charge = o.deliveryCharge;
+  if (o.platformFee !== undefined) data.platform_fee = o.platformFee;
+  data.payment_method = o.paymentMethod || 'upi';
+  data.payment_status = o.paymentStatus || 'pending';
+  data.order_status = o.orderStatus || 'pending_verification';
+  data.transaction_id = o.transactionId ? String(o.transactionId).trim() : null;
+  if (o.deliveryPartnerId !== undefined) data.delivery_partner_id = o.deliveryPartnerId;
+  if (o.deliveryPartnerName !== undefined) data.delivery_partner_name = o.deliveryPartnerName;
+  if (o.deliveryPartnerPhone !== undefined) data.delivery_partner_phone = o.deliveryPartnerPhone;
+  if (o.deliveryOtp !== undefined) data.delivery_otp = o.deliveryOtp;
+  if (o.items !== undefined) data.items = o.items;
+  if (o.sellerIds !== undefined) data.seller_ids = o.sellerIds;
+  if (o.statusHistory !== undefined) data.status_history = o.statusHistory;
+  data.updated_at = new Date().toISOString();
+  return data;
+}
+
+export function mapSellerOrderFromDb(row: any): SellerOrder {
+  return {
+    id: row.id,
+    orderId: row.order_id || '',
+    sellerId: row.seller_id || '',
+    shopName: row.shop_name || '',
+    customerId: row.customer_id || '',
+    customerName: row.customer_name || '',
+    customerPhone: row.customer_phone || '',
+    deliveryAddress: row.delivery_address || ({} as Address),
+    items: Array.isArray(row.items) ? row.items : [],
+    sellerSubtotal: Number(row.seller_subtotal) || 0,
+    commissionAmount: Number(row.commission_amount) || 0,
+    sellerEarnings: Number(row.seller_earnings) || 0,
+    status: row.status || 'confirmed',
+    transactionId: row.transaction_id || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
+
+export function mapSellerOrderToDb(so: Partial<SellerOrder>): any {
+  const data: any = {};
+  if (so.id !== undefined) data.id = so.id;
+  if (so.orderId !== undefined) data.order_id = so.orderId;
+  if (so.sellerId !== undefined) data.seller_id = so.sellerId;
+  if (so.shopName !== undefined) data.shop_name = so.shopName;
+  if (so.customerId !== undefined) data.customer_id = so.customerId;
+  if (so.customerName !== undefined) data.customer_name = so.customerName;
+  if (so.customerPhone !== undefined) data.customer_phone = so.customerPhone;
+  if (so.deliveryAddress !== undefined) data.delivery_address = so.deliveryAddress;
+  if (so.items !== undefined) data.items = so.items;
+  if (so.sellerSubtotal !== undefined) data.seller_subtotal = so.sellerSubtotal;
+  if (so.commissionAmount !== undefined) data.commission_amount = so.commissionAmount;
+  if (so.sellerEarnings !== undefined) data.seller_earnings = so.sellerEarnings;
+  data.status = so.status || 'pending_verification';
+  data.transaction_id = so.transactionId ? String(so.transactionId).trim() : null;
+  data.updated_at = new Date().toISOString();
+  return data;
+}
+
+export function mapDeliveryPartnerFromDb(row: any): DeliveryPartner {
+  return {
+    id: row.id,
+    fullName: row.full_name || '',
+    email: row.email || '',
+    phoneNumber: row.phone_number || '',
+    photoURL: row.photo_url || undefined,
+    dateOfBirth: row.date_of_birth || undefined,
+    address: row.address || '',
+    serviceArea: row.service_area || '',
+    vehicleType: row.vehicle_type || 'Bike',
+    vehicleNumber: row.vehicle_number || '',
+    drivingLicenceNumber: row.driving_licence_number || '',
+    idProofNumber: row.id_proof_number || '',
+    bankDetails: row.bank_details || {
+      accountHolderName: '',
+      accountNumber: '',
+      ifsc: '',
+      upiId: '',
+    },
+    status: row.status || 'pending',
+    isOnline: true, // Delivery partner status is permanently hardcoded to ONLINE (Active) by default
+    totalDeliveries: Number(row.total_deliveries) || 0,
+    rating: Number(row.rating) || 5.0,
+    rejectionReason: row.rejection_reason || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+}
+
+export function mapDeliveryPartnerToDb(dp: Partial<DeliveryPartner>): any {
+  const data: any = {};
+  if (dp.id !== undefined) data.id = dp.id;
+  if (dp.fullName !== undefined) data.full_name = dp.fullName;
+  if (dp.email !== undefined) data.email = dp.email;
+  if (dp.phoneNumber !== undefined) data.phone_number = dp.phoneNumber;
+  if (dp.photoURL !== undefined) data.photo_url = dp.photoURL;
+  if (dp.dateOfBirth !== undefined) data.date_of_birth = dp.dateOfBirth;
+  if (dp.address !== undefined) data.address = dp.address;
+  if (dp.serviceArea !== undefined) data.service_area = dp.serviceArea;
+  if (dp.vehicleType !== undefined) data.vehicle_type = dp.vehicleType;
+  if (dp.vehicleNumber !== undefined) data.vehicle_number = dp.vehicleNumber;
+  if (dp.drivingLicenceNumber !== undefined) data.driving_licence_number = dp.drivingLicenceNumber;
+  if (dp.idProofNumber !== undefined) data.id_proof_number = dp.idProofNumber;
+  if (dp.bankDetails !== undefined) data.bank_details = dp.bankDetails;
+  if (dp.status !== undefined) data.status = dp.status;
+  data.is_online = true; // Permanently hardcoded to ONLINE (Active) by default
+  if (dp.totalDeliveries !== undefined) data.total_deliveries = dp.totalDeliveries;
+  if (dp.rating !== undefined) data.rating = dp.rating;
+  if (dp.rejectionReason !== undefined) data.rejection_reason = dp.rejectionReason;
+  data.updated_at = new Date().toISOString();
+  return data;
+}
+
+export function mapAssignmentFromDb(row: any): DeliveryAssignment {
+  return {
+    id: row.id,
+    orderId: row.order_id || '',
+    sellerOrderId: row.seller_order_id || undefined,
+    deliveryPartnerId: row.delivery_partner_id || undefined,
+    deliveryPartnerName: row.delivery_partner_name || undefined,
+    deliveryPartnerPhone: row.delivery_partner_phone || undefined,
+    shopId: row.shop_id || '',
+    shopName: row.shop_name || '',
+    shopAddress: row.shop_address || '',
+    shopPhone: row.shop_phone || undefined,
+    customerName: row.customer_name || '',
+    customerPhone: row.customer_phone || '',
+    deliveryAddress: row.delivery_address || ({} as Address),
+    deliveryFee: Number(row.delivery_fee) || 0,
+    earningAmount: Number(row.earning_amount) || 0,
+    status: row.status || 'available',
+    otp: row.otp || '',
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
+
+export function mapAssignmentToDb(da: Partial<DeliveryAssignment>): any {
+  const data: any = {};
+  if (da.id !== undefined) data.id = da.id;
+  if (da.orderId !== undefined) data.order_id = da.orderId;
+  if (da.sellerOrderId !== undefined) data.seller_order_id = da.sellerOrderId;
+  if (da.deliveryPartnerId !== undefined) data.delivery_partner_id = da.deliveryPartnerId;
+  if (da.deliveryPartnerName !== undefined) data.delivery_partner_name = da.deliveryPartnerName;
+  if (da.deliveryPartnerPhone !== undefined) data.delivery_partner_phone = da.deliveryPartnerPhone;
+  if (da.shopId !== undefined) data.shop_id = da.shopId;
+  if (da.shopName !== undefined) data.shop_name = da.shopName;
+  if (da.shopAddress !== undefined) data.shop_address = da.shopAddress;
+  if (da.shopPhone !== undefined) data.shop_phone = da.shopPhone;
+  if (da.customerName !== undefined) data.customer_name = da.customerName;
+  if (da.customerPhone !== undefined) data.customer_phone = da.customerPhone;
+  if (da.deliveryAddress !== undefined) data.delivery_address = da.deliveryAddress;
+  if (da.deliveryFee !== undefined) data.delivery_fee = da.deliveryFee;
+  if (da.earningAmount !== undefined) data.earning_amount = da.earningAmount;
+  if (da.status !== undefined) data.status = da.status;
+  if (da.otp !== undefined) data.otp = da.otp;
+  data.updated_at = new Date().toISOString();
+  return data;
+}
+
+export function mapWalletFromDb(row: any): Wallet {
+  return {
+    id: row.id,
+    ownerId: row.owner_id || '',
+    role: row.role || 'seller',
+    currentBalance: Number(row.current_balance) || 0,
+    totalEarnings: Number(row.total_earnings) || 0,
+    todayEarnings: Number(row.today_earnings) || 0,
+    pendingEarnings: Number(row.pending_earnings) || 0,
+    totalPayouts: Number(row.total_payouts) || 0,
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
+
+export function mapWalletToDb(w: Partial<Wallet>): any {
+  const data: any = {};
+  if (w.id !== undefined) data.id = w.id;
+  if (w.ownerId !== undefined) data.owner_id = w.ownerId;
+  if (w.role !== undefined) data.role = w.role;
+  if (w.currentBalance !== undefined) data.current_balance = w.currentBalance;
+  if (w.totalEarnings !== undefined) data.total_earnings = w.totalEarnings;
+  if (w.todayEarnings !== undefined) data.today_earnings = w.todayEarnings;
+  if (w.pendingEarnings !== undefined) data.pending_earnings = w.pendingEarnings;
+  if (w.totalPayouts !== undefined) data.total_payouts = w.totalPayouts;
+  data.updated_at = new Date().toISOString();
+  return data;
+}
+
+export function mapTxFromDb(row: any): WalletTransaction {
+  return {
+    id: row.id,
+    walletId: row.wallet_id || '',
+    ownerId: row.owner_id || '',
+    role: row.role || 'seller',
+    type: row.type || 'credit',
+    amount: Number(row.amount) || 0,
+    description: row.description || '',
+    referenceId: row.reference_id || undefined,
+    orderId: row.order_id || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+}
+
+export function mapTxToDb(tx: Partial<WalletTransaction>): any {
+  const data: any = {};
+  if (tx.id !== undefined) data.id = tx.id;
+  if (tx.walletId !== undefined) data.wallet_id = tx.walletId;
+  if (tx.ownerId !== undefined) data.owner_id = tx.ownerId;
+  if (tx.role !== undefined) data.role = tx.role;
+  if (tx.type !== undefined) data.type = tx.type;
+  if (tx.amount !== undefined) data.amount = tx.amount;
+  if (tx.description !== undefined) data.description = tx.description;
+  if (tx.referenceId !== undefined) data.reference_id = tx.referenceId;
+  if (tx.orderId !== undefined) data.order_id = tx.orderId;
+  if (tx.createdAt !== undefined) data.created_at = tx.createdAt;
+  return data;
+}
+
+export function mapPayoutFromDb(row: any): PayoutRequest {
+  return {
+    id: row.id,
+    requesterId: row.requester_id || '',
+    requesterName: row.requester_name || '',
+    requesterRole: row.requester_role || 'seller',
+    shopId: row.shop_id || undefined,
+    amount: Number(row.amount) || 0,
+    upiId: row.upi_id || '',
+    bankDetails: row.bank_details || undefined,
+    status: row.status || 'pending',
+    transactionRef: row.transaction_ref || undefined,
+    adminNotes: row.admin_notes || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+    processedAt: row.processed_at || undefined,
+  };
+}
+
+export function mapPayoutToDb(p: Partial<PayoutRequest>): any {
+  const data: any = {};
+  if (p.id !== undefined) data.id = p.id;
+  if (p.requesterId !== undefined) data.requester_id = p.requesterId;
+  if (p.requesterName !== undefined) data.requester_name = p.requesterName;
+  if (p.requesterRole !== undefined) data.requester_role = p.requesterRole;
+  if (p.shopId !== undefined) data.shop_id = p.shopId;
+  if (p.amount !== undefined) data.amount = p.amount;
+  if (p.upiId !== undefined) data.upi_id = p.upiId;
+  if (p.bankDetails !== undefined) data.bank_details = p.bankDetails;
+  if (p.status !== undefined) data.status = p.status;
+  if (p.transactionRef !== undefined) data.transaction_ref = p.transactionRef;
+  if (p.adminNotes !== undefined) data.admin_notes = p.adminNotes;
+  if (p.processedAt !== undefined) data.processed_at = p.processedAt;
+  return data;
+}
+
+export function mapNotifFromDb(row: any): AppNotification {
+  return {
+    id: row.id,
+    userId: row.user_id || undefined,
+    recipientRole: row.recipient_role || 'all',
+    title: row.title || '',
+    message: row.message || '',
+    type: row.type || 'system',
+    referenceId: row.reference_id || undefined,
+    isRead: Boolean(row.is_read),
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+}
+
+export function mapNotifToDb(n: Partial<AppNotification>): any {
+  const data: any = {};
+  if (n.id !== undefined) data.id = n.id;
+  if (n.userId !== undefined) data.user_id = n.userId;
+  if (n.recipientRole !== undefined) data.recipient_role = n.recipientRole;
+  if (n.title !== undefined) data.title = n.title;
+  if (n.message !== undefined) data.message = n.message;
+  if (n.type !== undefined) data.type = n.type;
+  if (n.referenceId !== undefined) data.reference_id = n.referenceId;
+  if (n.isRead !== undefined) data.is_read = n.isRead;
+  if (n.createdAt !== undefined) data.created_at = n.createdAt;
+  return data;
+}
+
+export function mapSettingsFromDb(row: any): PlatformSettings {
+  return {
+    id: row.id || 'platform_settings',
+    sellerCommissionPercent: Number(row.seller_commission_percent) || 5,
+    platformFee: Number(row.platform_fee) || 5,
+    deliveryBaseCharge: Number(row.delivery_base_charge) || 40,
+    deliveryPartnerEarningPerOrder: Number(row.delivery_partner_earning_per_order) || 35,
+    minPayoutAmount: Number(row.min_payout_amount) || 100,
+    autoApproveProducts: row.auto_approve_products !== false,
+    cashOnDeliveryEnabled: row.cash_on_delivery_enabled !== false,
+    localPinCodeRestriction: row.local_pin_code_restriction !== false,
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
+
+export function mapSettingsToDb(s: Partial<PlatformSettings>): any {
+  const data: any = {};
+  if (s.id !== undefined) data.id = s.id;
+  if (s.sellerCommissionPercent !== undefined) data.seller_commission_percent = s.sellerCommissionPercent;
+  if (s.platformFee !== undefined) data.platform_fee = s.platformFee;
+  if (s.deliveryBaseCharge !== undefined) data.delivery_base_charge = s.deliveryBaseCharge;
+  if (s.deliveryPartnerEarningPerOrder !== undefined) data.delivery_partner_earning_per_order = s.deliveryPartnerEarningPerOrder;
+  if (s.minPayoutAmount !== undefined) data.min_payout_amount = s.minPayoutAmount;
+  if (s.autoApproveProducts !== undefined) data.auto_approve_products = s.autoApproveProducts;
+  if (s.cashOnDeliveryEnabled !== undefined) data.cash_on_delivery_enabled = s.cashOnDeliveryEnabled;
+  if (s.localPinCodeRestriction !== undefined) data.local_pin_code_restriction = s.localPinCodeRestriction;
+  data.updated_at = new Date().toISOString();
+  return data;
+}
+
+// Default platform settings
+export const DEFAULT_SETTINGS: PlatformSettings = {
+  id: 'platform_settings',
+  sellerCommissionPercent: 5,
+  platformFee: 5,
+  deliveryBaseCharge: 40,
+  deliveryPartnerEarningPerOrder: 35,
+  minPayoutAmount: 100,
+  autoApproveProducts: true,
+  cashOnDeliveryEnabled: true,
+  localPinCodeRestriction: true, // Strict local matching rule (Default: ON)
+  updatedAt: new Date().toISOString(),
+};
+
+// =========================================================================
+// PLATFORM SETTINGS
+// =========================================================================
+export async function getPlatformSettings(): Promise<PlatformSettings> {
+  try {
+    const { data, error } = await supabase
+      .from('platform_settings')
+      .select('*')
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && data) {
+      return mapSettingsFromDb(data);
+    }
+  } catch (err) {
+    // Ignore and fallback
+  }
+
+  // Fallback to Firestore / defaults
+  try {
+    const docRef = doc(db, 'settings', 'platform_settings');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as PlatformSettings;
+    }
+  } catch (e) {
+    // Ignore
+  }
+
+  return DEFAULT_SETTINGS;
+}
+
+export function listenToSettings(callback: (settings: PlatformSettings) => void) {
+  // 1. Initial fetch from Supabase
+  getPlatformSettings().then(callback);
+
+  // 2. Realtime listener via Supabase
+  const channel = createRealtimeChannel('realtime:platform_settings')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'platform_settings' },
+      (payload) => {
+        if (payload.new) {
+          callback(mapSettingsFromDb(payload.new));
+        }
+      }
+    )
+    .subscribe();
+
+  // 3. Fallback Firestore snapshot
+  const docRef = doc(db, 'settings', 'platform_settings');
+  const unsubFs = onSnapshot(docRef, (snap) => {
+    if (snap.exists()) {
+      callback(snap.data() as PlatformSettings);
+    }
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function updatePlatformSettings(settings: Partial<PlatformSettings>) {
+  const payload = mapSettingsToDb({ id: 'platform_settings', ...settings });
+
+  // 1. Update in Supabase
+  try {
+    await supabase.from('platform_settings').upsert(payload);
+  } catch (e) {
+    console.warn('Supabase settings update error:', e);
+  }
+
+  // 2. Mirror to Firestore
+  try {
+    const docRef = doc(db, 'settings', 'platform_settings');
+    await setDoc(docRef, { ...settings, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (e) {
+    // Ignore
+  }
+}
+
+// =========================================================================
+// NOTIFICATIONS
+// =========================================================================
+export async function createNotification(notification: Omit<AppNotification, 'id' | 'createdAt' | 'isRead'>) {
+  const id = 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  const newNotif: AppNotification = {
+    ...notification,
+    id,
+    isRead: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    await supabase.from('notifications').insert(mapNotifToDb(newNotif));
+  } catch (e) {
+    // Ignore Supabase error if table pending
+  }
+
+  try {
+    const docRef = doc(db, 'notifications', id);
+    await setDoc(docRef, newNotif);
+  } catch (e) {
+    // Ignore
+  }
+
+  return newNotif;
+}
+
+export function listenToNotifications(userId: string, role: string, callback: (notifications: AppNotification[]) => void) {
+  const fetchSupabaseNotifs = async () => {
+    try {
+      let query = supabase.from('notifications').select('*').order('created_at', { ascending: false });
+      if (role !== 'admin') {
+        query = query.or(`user_id.eq.${userId},recipient_role.eq.${role},recipient_role.eq.all`);
+      }
+      const { data, error } = await query;
+      if (!error && data) {
+        callback(data.map(mapNotifFromDb));
+        return true;
+      }
+    } catch {
+      // Fallback
+    }
+    return false;
+  };
+
+  fetchSupabaseNotifs();
+
+  const channel = createRealtimeChannel(`realtime:notifications_${userId || 'all'}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
+      fetchSupabaseNotifs();
+    })
+    .subscribe();
+
+  // Firestore fallback
+  const colRef = collection(db, 'notifications');
+  const unsubFs = onSnapshot(colRef, (snapshot) => {
+    const notifs: AppNotification[] = [];
+    snapshot.forEach((d) => {
+      const data = d.data() as AppNotification;
+      if (
+        role === 'admin' ||
+        data.recipientRole === 'all' ||
+        data.userId === userId ||
+        (data.recipientRole && data.recipientRole === role)
+      ) {
+        notifs.push(data);
+      }
+    });
+    notifs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(notifs);
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function markNotificationAsRead(id: string) {
+  try {
+    await supabase.from('notifications').update({ is_read: true }).eq('id', id);
+  } catch {}
+  try {
+    const docRef = doc(db, 'notifications', id);
+    await updateDoc(docRef, { isRead: true });
+  } catch {}
+}
+
+// =========================================================================
+// CATEGORIES
+// =========================================================================
+export const DEFAULT_CATEGORIES: Category[] = [
+  { id: 'cat_food', name: 'Food', icon: 'UtensilsCrossed', order: 1, description: 'Fresh cooked meals, local delicacies & snacks' },
+  { id: 'cat_vegetables', name: 'Vegetables', icon: 'Carrot', order: 2, description: 'Farm-fresh vegetables, leafy greens & organic produce' },
+  { id: 'cat_grocery', name: 'Grocery', icon: 'ShoppingBag', order: 3, description: 'Daily essentials, staples & kitchen provisions' },
+  { id: 'cat_electronics', name: 'Electronics', icon: 'Headphones', order: 4, description: 'Audio, gadgets & consumer electronics' },
+  { id: 'cat_mobiles', name: 'Mobiles', icon: 'Smartphone', order: 5, description: 'Smartphones, chargers & mobile accessories' },
+  { id: 'cat_fashion', name: 'Fashion', icon: 'Shirt', order: 6, description: 'Apparel, traditional wear & footwear' },
+  { id: 'cat_home', name: 'Home & Kitchen', icon: 'Home', order: 7, description: 'Cookware, dining & home living essentials' },
+  { id: 'cat_beauty', name: 'Beauty & Health', icon: 'Sparkles', order: 8, description: 'Personal wellness & grooming products' },
+];
+
+export function listenToCategories(callback: (categories: Category[]) => void) {
+  // Always emit default categories first so homepage categories render immediately
+  callback(DEFAULT_CATEGORIES);
+
+  const fetchFromSupabase = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .order('display_order', { ascending: true });
+      if (!error && data && data.length > 0) {
+        const dbList: Category[] = data.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          icon: c.icon || 'Box',
+          image: c.image || undefined,
+          description: c.description || undefined,
+          order: Number(c.display_order) || 0,
+        }));
+
+        // Ensure Food and Vegetables are included even if older DB dump lacks them
+        const hasFood = dbList.some((c) => c.name.toLowerCase() === 'food');
+        const hasVeg = dbList.some((c) => c.name.toLowerCase().includes('veg'));
+        const mergedList = [...dbList];
+        if (!hasFood) {
+          mergedList.unshift(DEFAULT_CATEGORIES[0]);
+        }
+        if (!hasVeg) {
+          mergedList.splice(1, 0, DEFAULT_CATEGORIES[1]);
+        }
+        mergedList.sort((a, b) => (a.order || 0) - (b.order || 0));
+
+        callback(mergedList);
+        return true;
+      }
+    } catch {}
+    return false;
+  };
+
+  fetchFromSupabase();
+
+  const channel = createRealtimeChannel('realtime:categories')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => {
+      fetchFromSupabase();
+    })
+    .subscribe();
+
+  const colRef = collection(db, 'categories');
+  const unsubFs = onSnapshot(colRef, (snap) => {
+    if (!snap.empty) {
+      const list: Category[] = [];
+      snap.forEach((d) => list.push(d.data() as Category));
+      list.sort((a, b) => (a.order || 0) - (b.order || 0));
+      callback(list);
+    }
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function saveCategory(category: Category) {
+  try {
+    await supabase.from('categories').upsert({
+      id: category.id,
+      name: category.name,
+      icon: category.icon,
+      image: category.image || null,
+      description: category.description || null,
+      display_order: category.order,
+      updated_at: new Date().toISOString(),
+    });
+  } catch {}
+  try {
+    const docRef = doc(db, 'categories', category.id);
+    await setDoc(docRef, category, { merge: true });
+  } catch {}
+}
+
+export async function deleteCategory(id: string) {
+  try {
+    await supabase.from('categories').delete().eq('id', id);
+  } catch {}
+  try {
+    await deleteDoc(doc(db, 'categories', id));
+  } catch {}
+}
+
+// =========================================================================
+// SHOPS / SELLERS
+// =========================================================================
+export function listenToShops(callback: (shops: Shop[]) => void) {
+  const fetchSupabaseShops = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('shops')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        callback(data.map(mapShopFromDb));
+        return true;
+      }
+    } catch {}
+    return false;
+  };
+
+  fetchSupabaseShops();
+
+  const channel = createRealtimeChannel('realtime:shops')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'shops' }, () => {
+      fetchSupabaseShops();
+    })
+    .subscribe();
+
+  const colRef = collection(db, 'shops');
+  const unsubFs = onSnapshot(colRef, (snap) => {
+    const list: Shop[] = [];
+    snap.forEach((d) => list.push(d.data() as Shop));
+    callback(list);
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function getShopByOwnerId(ownerId: string, email?: string): Promise<Shop | null> {
+  const cleanEmail = (email || '').toLowerCase().trim();
+
+  // 1. Supabase check by owner_id or email
+  try {
+    let queryBuilder = supabase.from('shops').select('*');
+    if (ownerId && cleanEmail) {
+      queryBuilder = queryBuilder.or(`owner_id.eq.${ownerId},email.ilike.${cleanEmail}`);
+    } else if (ownerId) {
+      queryBuilder = queryBuilder.eq('owner_id', ownerId);
+    } else if (cleanEmail) {
+      queryBuilder = queryBuilder.ilike('email', cleanEmail);
+    }
+
+    const { data, error } = await queryBuilder.limit(1).maybeSingle();
+    if (!error && data) {
+      // Auto-heal owner_id if UID changed but email matches
+      if (ownerId && data.owner_id !== ownerId) {
+        supabase.from('shops').update({ owner_id: ownerId }).eq('id', data.id).then(() => {}, () => {});
+      }
+      return mapShopFromDb(data);
+    }
+  } catch (err) {
+    console.warn('Supabase getShopByOwnerId notice:', err);
+  }
+
+  // 2. Firestore fallback
+  try {
+    if (ownerId) {
+      const q = query(collection(db, 'shops'), where('ownerId', '==', ownerId));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return snap.docs[0].data() as Shop;
+      }
+    }
+    if (cleanEmail) {
+      const qEmail = query(collection(db, 'shops'), where('email', '==', cleanEmail));
+      const snapEmail = await getDocs(qEmail);
+      if (!snapEmail.empty) {
+        return snapEmail.docs[0].data() as Shop;
+      }
+    }
+  } catch {}
+
+  // 3. Fallback to Marak shop (shop_1791092440747) as the active vendor shop
+  try {
+    const { data: defaultShop } = await supabase
+      .from('shops')
+      .select('*')
+      .eq('id', 'shop_1791092440747')
+      .maybeSingle();
+    if (defaultShop) {
+      return mapShopFromDb(defaultShop);
+    }
+  } catch {}
+
+  return null;
+}
+
+export function listenToShopByOwnerId(ownerId: string, callback: (shop: Shop | null) => void, email?: string) {
+  const cleanEmail = (email || '').toLowerCase().trim();
+  const fetchShop = async () => {
+    const shop = await getShopByOwnerId(ownerId, cleanEmail);
+    callback(shop);
+  };
+  fetchShop();
+
+  const channel = createRealtimeChannel(`realtime:shop_${ownerId}_${cleanEmail ? 'email' : 'owner'}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'shops' }, () => {
+      fetchShop();
+    })
+    .subscribe();
+
+  const q = ownerId ? query(collection(db, 'shops'), where('ownerId', '==', ownerId)) : null;
+  const unsubFs = q
+    ? onSnapshot(q, (snap) => {
+        if (!snap.empty) {
+          callback(snap.docs[0].data() as Shop);
+        } else {
+          fetchShop();
+        }
+      })
+    : () => {};
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function registerShop(
+  shopData: Omit<Shop, 'id' | 'status' | 'createdAt' | 'rating' | 'totalProducts' | 'totalSales'>,
+  initialStatus?: Shop['status']
+) {
+  const cleanEmail = (shopData.email || '').toLowerCase().trim();
+
+  // Strict Profile Lock: A single Gmail ID is only allowed to register ONE shop
+  const existingShop = await getShopByOwnerId(shopData.ownerId, cleanEmail);
+  if (existingShop) {
+    throw new Error(`A shop is already registered for this Google account ("${existingShop.shopName}"). Each Gmail ID is permitted only one shop profile.`);
+  }
+
+  const id = 'shop_' + Date.now();
+  const cleanPostal = (shopData.postalCode || '').trim();
+  const cleanService = (shopData.servicePinCode || cleanPostal).trim();
+
+  const shop: Shop = {
+    ...shopData,
+    postalCode: cleanPostal,
+    servicePinCode: cleanService,
+    id,
+    status: initialStatus || 'pending_approval',
+    rating: 4.8,
+    totalProducts: 0,
+    totalSales: 0,
+    createdAt: new Date().toISOString(),
+  };
+
+  // 1. Supabase primary insert
+  const { error: insErr } = await supabase.from('shops').insert(mapShopToDb(shop));
+  if (insErr) {
+    console.error('Supabase shop register error:', insErr);
+    throw new Error(`Shop registration failed: ${insErr.message}`);
+  }
+
+  // 2. Upsert user role to 'seller' in public.users
+  try {
+    await supabase.from('users').upsert({
+      uid: shop.ownerId,
+      email: cleanEmail,
+      display_name: shop.ownerName,
+      role: 'seller',
+      delivery_pin_code: cleanService,
+      updated_at: new Date().toISOString(),
+    });
+  } catch {}
+
+  // 3. Firestore mirror (graceful fallback)
+  try {
+    await setDoc(doc(db, 'shops', id), shop);
+  } catch (e) {
+    // Ignore if offline
+  }
+
+  // 4. Admin Notification
+  await createNotification({
+    recipientRole: 'admin',
+    title: initialStatus === 'approved' ? 'Shop Registered & Approved' : 'New Shop Registration',
+    message: `${shop.shopName} (Service PIN: ${cleanService}) has been registered with status ${shop.status}.`,
+    type: 'approval',
+    referenceId: id,
+  });
+
+  return shop;
+}
+
+export async function deleteShop(shopId: string) {
+  try {
+    await supabase.from('shops').delete().eq('id', shopId);
+  } catch {}
+  try {
+    await deleteDoc(doc(db, 'shops', shopId));
+  } catch {}
+}
+
+export async function updateShopStatus(shopId: string, status: Shop['status'], rejectionReason?: string) {
+  // 1. Supabase primary update
+  const { error: updErr } = await supabase
+    .from('shops')
+    .update({
+      status,
+      rejection_reason: rejectionReason || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', shopId);
+
+  if (updErr) {
+    console.error('Supabase shop status update error:', updErr);
+    throw new Error(`Failed to update shop status: ${updErr.message}`);
+  }
+
+  // 2. Firestore mirror (graceful fallback)
+  try {
+    const docRef = doc(db, 'shops', shopId);
+    await updateDoc(docRef, {
+      status,
+      rejectionReason: rejectionReason || null,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {}
+
+  // Create notification for seller
+  const shop = await (async () => {
+    try {
+      const { data } = await supabase.from('shops').select('*').eq('id', shopId).single();
+      if (data) return mapShopFromDb(data);
+    } catch {}
+    try {
+      const snap = await getDoc(doc(db, 'shops', shopId));
+      if (snap.exists()) return snap.data() as Shop;
+    } catch {}
+    return null;
+  })();
+
+  if (shop) {
+    await createNotification({
+      userId: shop.ownerId,
+      recipientRole: 'seller',
+      title: status === 'approved' ? 'Shop Approved!' : status === 'rejected' ? 'Shop Registration Update' : 'Shop Status Changed',
+      message:
+        status === 'approved'
+          ? `Congratulations! Your shop ${shop.shopName} has been approved to sell on Balpakram online store.`
+          : `Your shop ${shop.shopName} is now ${status}.${rejectionReason ? ` Reason: ${rejectionReason}` : ''}`,
+      type: 'approval',
+      referenceId: shopId,
+    });
+  }
+}
+
+// =========================================================================
+// PRODUCTS (DIRECT FROM SUPABASE SINGLE SOURCE OF TRUTH)
+// =========================================================================
+export async function fetchProductsFromSupabase(): Promise<Product[]> {
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (!error && data) {
+      return data.map(mapProductFromDb);
+    }
+  } catch (err) {
+    console.warn('Supabase fetchProducts notice:', err);
+  }
+  return [];
+}
+
+export function listenToProducts(callback: (products: Product[]) => void) {
+  const fetchProducts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        callback(data.map(mapProductFromDb));
+        return true;
+      }
+    } catch (err) {
+      console.warn('Supabase fetchProducts notice:', err);
+    }
+    return false;
+  };
+
+  fetchProducts();
+
+  const channel = createRealtimeChannel('realtime:products')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+      fetchProducts();
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+export function listenToSellerProducts(shopId: string, callback: (products: Product[]) => void) {
+  let hasSupabaseData = false;
+
+  const fetchSellerProds = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('shop_id', shopId)
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        hasSupabaseData = true;
+        callback(data.map(mapProductFromDb));
+        return true;
+      }
+    } catch (err) {
+      console.warn('Supabase fetchSellerProds notice:', err);
+    }
+    return false;
+  };
+
+  fetchSellerProds();
+
+  const channel = createRealtimeChannel(`realtime:seller_products_${shopId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `shop_id=eq.${shopId}` }, () => {
+      fetchSellerProds();
+    })
+    .subscribe();
+
+  const q = query(collection(db, 'products'), where('shopId', '==', shopId));
+  const unsubFs = onSnapshot(q, (snap) => {
+    if (!hasSupabaseData) {
+      const list: Product[] = [];
+      snap.forEach((d) => list.push(d.data() as Product));
+      callback(list);
+    }
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function saveProduct(product: Product) {
+  const toSave = { ...product };
+
+  // Guarantee sellerPinCode matches the shop servicePinCode
+  if (!toSave.sellerPinCode) {
+    try {
+      const { data: sData } = await supabase.from('shops').select('*').eq('id', toSave.shopId).single();
+      if (sData) {
+        toSave.sellerPinCode = (sData.service_pin_code || sData.postal_code || '').trim();
+        toSave.shopPinCode = (sData.postal_code || '').trim();
+      }
+    } catch {}
+
+    if (!toSave.sellerPinCode) {
+      try {
+        const shopSnap = await getDoc(doc(db, 'shops', toSave.shopId));
+        if (shopSnap.exists()) {
+          const shop = shopSnap.data() as Shop;
+          toSave.sellerPinCode = (shop.servicePinCode || shop.postalCode || '').trim();
+          toSave.shopPinCode = (shop.postalCode || '').trim();
+        }
+      } catch {}
+    }
+  }
+
+  // 1. Supabase upsert
+  const { error: pErr } = await supabase.from('products').upsert(mapProductToDb(toSave));
+  if (pErr) {
+    console.error('Supabase product save error:', pErr);
+    throw new Error(`Failed to save product: ${pErr.message}`);
+  }
+
+  // 2. Firestore mirror
+  try {
+    const docRef = doc(db, 'products', product.id);
+    await setDoc(docRef, toSave, { merge: true });
+  } catch {}
+
+  // 3. Upsert location-based village rates to village_delivery_rates table for global checkout resolution
+  if (toSave.targetPinCode && Array.isArray(toSave.villageDeliveryRates) && toSave.villageDeliveryRates.length > 0) {
+    const pin = toSave.targetPinCode.trim();
+    for (const v of toSave.villageDeliveryRates) {
+      if (v.villageName && v.villageName.trim()) {
+        const rateId = `vrate_${pin}_${v.villageName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+        const vRow = {
+          id: rateId,
+          pin_code: pin,
+          village_name: v.villageName.trim(),
+          delivery_charge: Number(v.deliveryCharge) || 0,
+          updated_at: new Date().toISOString(),
+        };
+        try {
+          await supabase.from('village_delivery_rates').upsert(vRow, { onConflict: 'id' });
+        } catch {}
+        try {
+          await setDoc(
+            doc(db, 'village_delivery_rates', rateId),
+            {
+              id: rateId,
+              pinCode: pin,
+              villageName: v.villageName.trim(),
+              deliveryCharge: Number(v.deliveryCharge) || 0,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch {}
+      }
+    }
+  }
+}
+
+export async function deleteProduct(productId: string) {
+  try {
+    await supabase.from('cart_items').delete().eq('product_id', productId);
+  } catch {}
+
+  try {
+    const { error } = await supabase.from('products').delete().eq('id', productId);
+    if (error) {
+      console.warn('Supabase product delete warning:', error.message);
+      await supabase.from('products').update({ is_active: false, is_approved: false, updated_at: new Date().toISOString() }).eq('id', productId);
+    }
+  } catch (err) {
+    console.error('Supabase product delete exception:', err);
+    try {
+      await supabase.from('products').update({ is_active: false, is_approved: false, updated_at: new Date().toISOString() }).eq('id', productId);
+    } catch {}
+  }
+
+  try {
+    await deleteDoc(doc(db, 'products', productId));
+  } catch (fErr) {
+    console.warn('Firestore product delete notice:', fErr);
+    try {
+      await updateDoc(doc(db, 'products', productId), { isActive: false, isApproved: false, isDeleted: true, updatedAt: new Date().toISOString() });
+    } catch {}
+  }
+}
+
+export async function toggleProductApproval(productId: string, isApproved: boolean) {
+  try {
+    await supabase.from('products').update({ is_approved: isApproved, updated_at: new Date().toISOString() }).eq('id', productId);
+  } catch {}
+  try {
+    const docRef = doc(db, 'products', productId);
+    await updateDoc(docRef, { isApproved, updatedAt: new Date().toISOString() });
+  } catch {}
+}
+
+export async function toggleProductActive(productId: string, isActive: boolean) {
+  try {
+    await supabase.from('products').update({ is_active: isActive, updated_at: new Date().toISOString() }).eq('id', productId);
+  } catch {}
+  try {
+    const docRef = doc(db, 'products', productId);
+    await updateDoc(docRef, { isActive, updatedAt: new Date().toISOString() });
+  } catch {}
+}
+
+// =========================================================================
+// DELIVERY PARTNERS
+// =========================================================================
+export function listenToDeliveryPartners(callback: (partners: DeliveryPartner[]) => void) {
+  const fetchPartners = async () => {
+    try {
+      const { data, error } = await supabase.from('delivery_partners').select('*').order('created_at', { ascending: false });
+      if (!error && data) {
+        callback(data.map(mapDeliveryPartnerFromDb));
+        return true;
+      }
+    } catch {}
+    return false;
+  };
+
+  fetchPartners();
+
+  const channel = createRealtimeChannel('realtime:delivery_partners')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_partners' }, () => {
+      fetchPartners();
+    })
+    .subscribe();
+
+  const colRef = collection(db, 'delivery_partners');
+  const unsubFs = onSnapshot(colRef, (snap) => {
+    const list: DeliveryPartner[] = [];
+    snap.forEach((d) => list.push(d.data() as DeliveryPartner));
+    callback(list);
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function getDeliveryPartnerByIdOrEmail(partnerId: string, email?: string): Promise<DeliveryPartner | null> {
+  const cleanEmail = (email || '').toLowerCase().trim();
+
+  // 1. Supabase check
+  try {
+    let q = supabase.from('delivery_partners').select('*');
+    if (partnerId && cleanEmail) {
+      q = q.or(`id.eq.${partnerId},email.ilike.${cleanEmail}`);
+    } else if (partnerId) {
+      q = q.eq('id', partnerId);
+    } else if (cleanEmail) {
+      q = q.ilike('email', cleanEmail);
+    }
+
+    const { data, error } = await q.limit(1).maybeSingle();
+    if (!error && data) {
+      // Auto-heal id if UID changed but email matches
+      if (partnerId && data.id !== partnerId) {
+        supabase.from('delivery_partners').update({ id: partnerId }).eq('id', data.id).then(() => {}, () => {});
+      }
+      return mapDeliveryPartnerFromDb(data);
+    }
+  } catch (err) {
+    console.warn('Supabase getDeliveryPartner notice:', err);
+  }
+
+  // 2. Firestore fallback
+  try {
+    if (partnerId) {
+      const snap = await getDoc(doc(db, 'delivery_partners', partnerId));
+      if (snap.exists()) {
+        return snap.data() as DeliveryPartner;
+      }
+    }
+    if (cleanEmail) {
+      const qEmail = query(collection(db, 'delivery_partners'), where('email', '==', cleanEmail));
+      const snapEmail = await getDocs(qEmail);
+      if (!snapEmail.empty) {
+        return snapEmail.docs[0].data() as DeliveryPartner;
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+export function listenToDeliveryPartner(partnerId: string, callback: (partner: DeliveryPartner | null) => void, email?: string) {
+  const cleanEmail = (email || '').toLowerCase().trim();
+  const fetchSingle = async () => {
+    const partner = await getDeliveryPartnerByIdOrEmail(partnerId, cleanEmail);
+    callback(partner);
+  };
+
+  fetchSingle();
+
+  const channel = createRealtimeChannel(`realtime:delivery_partner_${partnerId}_${cleanEmail ? 'email' : 'id'}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_partners' }, () => {
+      fetchSingle();
+    })
+    .subscribe();
+
+  const docRef = partnerId ? doc(db, 'delivery_partners', partnerId) : null;
+  const unsubFs = docRef
+    ? onSnapshot(docRef, (snap) => {
+        if (snap.exists()) {
+          callback(snap.data() as DeliveryPartner);
+        } else {
+          fetchSingle();
+        }
+      })
+    : () => {};
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function checkUserProfiles(uid: string, email?: string): Promise<{
+  hasShop: boolean;
+  shop: Shop | null;
+  hasDeliveryPartner: boolean;
+  deliveryPartner: DeliveryPartner | null;
+}> {
+  const [shop, deliveryPartner] = await Promise.all([
+    getShopByOwnerId(uid, email),
+    getDeliveryPartnerByIdOrEmail(uid, email),
+  ]);
+
+  return {
+    hasShop: Boolean(shop),
+    shop,
+    hasDeliveryPartner: Boolean(deliveryPartner),
+    deliveryPartner,
+  };
+}
+
+export async function fetchUserRoleFromSupabase(uid: string, email?: string): Promise<{
+  role: UserRole;
+  shop: Shop | null;
+  deliveryPartner: DeliveryPartner | null;
+  hasShop: boolean;
+  hasDeliveryPartner: boolean;
+}> {
+  const cleanEmail = (email || '').toLowerCase().trim();
+
+  // 1. Fetch user role directly from Supabase 'public.users' table
+  let dbRole: UserRole | null = null;
+  try {
+    let query = supabase.from('users').select('role, uid, email');
+    if (uid && cleanEmail) {
+      query = query.or(`uid.eq.${uid},email.ilike.${cleanEmail}`);
+    } else if (uid) {
+      query = query.eq('uid', uid);
+    } else if (cleanEmail) {
+      query = query.eq('email', cleanEmail);
+    }
+    const { data, error } = await query.limit(1).maybeSingle();
+    if (!error && data && data.role) {
+      dbRole = data.role as UserRole;
+    }
+  } catch (err) {
+    console.warn('Supabase user role fetch notice:', err);
+  }
+
+  // 2. Fetch associated shop and delivery partner profile from Supabase
+  const { hasShop, shop, hasDeliveryPartner, deliveryPartner } = await checkUserProfiles(uid, cleanEmail);
+
+  // 3. Resolve authoritative role:
+  // - Admin (Silgrak Marak / admin role)
+  // - Seller if user owns an active/registered shop or role in users table is 'seller'
+  // - Delivery Partner if user has registered delivery profile or role in users table is 'delivery_partner'
+  // - Customer if role in users table is 'customer'
+  let authoritativeRole: UserRole = 'customer';
+  const isSuperAdmin = cleanEmail === 'silgrakmarak1309@gmail.com' || uid === 'admin_silgrakmarak1309' || dbRole === 'admin';
+
+  if (isSuperAdmin) {
+    authoritativeRole = 'admin';
+  } else if (dbRole === 'seller' || hasShop) {
+    authoritativeRole = 'seller';
+  } else if (dbRole === 'delivery_partner' || hasDeliveryPartner) {
+    authoritativeRole = 'delivery_partner';
+  } else if (dbRole === 'customer') {
+    authoritativeRole = 'customer';
+  } else {
+    authoritativeRole = 'customer';
+  }
+
+  // 4. Auto-sync resolved role to Supabase public.users table if desynced
+  if (uid && (dbRole !== authoritativeRole || !dbRole)) {
+    supabase
+      .from('users')
+      .upsert({
+        uid,
+        email: cleanEmail,
+        role: authoritativeRole,
+        updated_at: new Date().toISOString(),
+      })
+      .then(() => {}, () => {});
+  }
+
+  return {
+    role: authoritativeRole,
+    shop,
+    deliveryPartner,
+    hasShop,
+    hasDeliveryPartner,
+  };
+}
+
+export async function registerDeliveryPartner(partnerData: Omit<DeliveryPartner, 'status' | 'totalDeliveries' | 'rating' | 'createdAt' | 'isOnline'>) {
+  const cleanEmail = (partnerData.email || '').toLowerCase().trim();
+
+  // Strict Profile Lock: A single Gmail ID is only allowed to register ONE delivery profile
+  const existingPartner = await getDeliveryPartnerByIdOrEmail(partnerData.id, cleanEmail);
+  if (existingPartner) {
+    throw new Error(`A delivery profile is already registered for this Google account ("${existingPartner.fullName}"). Each Gmail ID is permitted only one delivery profile.`);
+  }
+
+  const partner: DeliveryPartner = {
+    ...partnerData,
+    status: 'pending',
+    isOnline: true,
+    totalDeliveries: 0,
+    rating: 5.0,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    await supabase.from('delivery_partners').upsert(mapDeliveryPartnerToDb(partner));
+  } catch (e) {
+    console.warn('Supabase rider register error:', e);
+  }
+
+  try {
+    await setDoc(doc(db, 'delivery_partners', partner.id), partner);
+  } catch {}
+
+  await createNotification({
+    recipientRole: 'admin',
+    title: 'New Delivery Partner Onboarding',
+    message: `${partner.fullName} (${partner.vehicleType} - ${partner.vehicleNumber}) has applied to become a delivery partner.`,
+    type: 'approval',
+    referenceId: partner.id,
+  });
+
+  return partner;
+}
+
+export async function updateDeliveryPartnerStatus(partnerId: string, status: DeliveryPartner['status'], rejectionReason?: string) {
+  try {
+    await supabase
+      .from('delivery_partners')
+      .update({
+        status,
+        rejection_reason: rejectionReason || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', partnerId);
+  } catch {}
+
+  try {
+    const docRef = doc(db, 'delivery_partners', partnerId);
+    await updateDoc(docRef, {
+      status,
+      rejectionReason: rejectionReason || null,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {}
+
+  await createNotification({
+    userId: partnerId,
+    recipientRole: 'delivery_partner',
+    title: status === 'approved' ? 'Application Approved!' : status === 'rejected' ? 'Application Status Update' : 'Status Update',
+    message:
+      status === 'approved'
+        ? 'Congratulations! Your delivery partner application has been approved. You can now toggle Online and accept orders.'
+        : `Your application is now ${status}.${rejectionReason ? ` Reason: ${rejectionReason}` : ''}`,
+    type: 'approval',
+    referenceId: partnerId,
+  });
+}
+
+export async function toggleDeliveryPartnerOnline(partnerId: string, isOnline: boolean) {
+  try {
+    await supabase.from('delivery_partners').update({ is_online: isOnline, updated_at: new Date().toISOString() }).eq('id', partnerId);
+  } catch {}
+  try {
+    const docRef = doc(db, 'delivery_partners', partnerId);
+    await updateDoc(docRef, { isOnline, updatedAt: new Date().toISOString() });
+  } catch {}
+}
+
+// =========================================================================
+// WALLETS & TRANSACTIONS
+// =========================================================================
+
+/**
+ * Ensures that a wallet row exists in Supabase 'public.wallets' table for the given owner_id and role.
+ * If it doesn't exist, automatically creates a new row with a starting balance of 0 so the wallet section never breaks.
+ */
+export async function ensureWalletExists(
+  ownerId: string,
+  role: 'seller' | 'delivery_partner',
+  startingBalance: number = 0
+): Promise<Wallet> {
+  if (!ownerId) {
+    throw new Error('Owner ID is required to ensure wallet');
+  }
+
+  // 1. Direct query in Supabase 'public.wallets' table
+  try {
+    const { data, error } = await supabase
+      .from('wallets')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .eq('role', role)
+      .maybeSingle();
+
+    if (!error && data) {
+      return mapWalletFromDb(data);
+    }
+  } catch (err) {
+    console.warn('Supabase wallet check note:', err);
+  }
+
+  // 1b. Check by predictable wallet ID
+  const walletId = `wallet_${ownerId}_${role}`;
+  try {
+    const { data: byId } = await supabase
+      .from('wallets')
+      .select('*')
+      .eq('id', walletId)
+      .maybeSingle();
+
+    if (byId) {
+      return mapWalletFromDb(byId);
+    }
+  } catch {}
+
+  // 1c. If role is seller, handle authenticated owner_id vs shop ID resolution
+  if (role === 'seller') {
+    try {
+      const { data: shopRow } = await supabase
+        .from('shops')
+        .select('id, owner_id')
+        .or(`owner_id.eq.${ownerId},id.eq.${ownerId}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (shopRow) {
+        // If ownerId was passed as shop.id, map to the authenticated shop.owner_id (UUID)
+        if (ownerId === shopRow.id && shopRow.owner_id && shopRow.owner_id !== ownerId) {
+          return await ensureWalletExists(shopRow.owner_id, 'seller', startingBalance);
+        }
+
+        // Check if legacy wallet existed under shopRow.id
+        if (shopRow.id && shopRow.id !== ownerId) {
+          const { data: legacyWallet } = await supabase
+            .from('wallets')
+            .select('*')
+            .eq('owner_id', shopRow.id)
+            .eq('role', 'seller')
+            .maybeSingle();
+
+          if (legacyWallet && (Number(legacyWallet.current_balance) > 0 || Number(legacyWallet.total_earnings) > 0)) {
+            startingBalance = Math.max(startingBalance, Number(legacyWallet.current_balance) || 0);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Seller shop mapping note:', e);
+    }
+  }
+
+  // 1d. If role is delivery_partner and ownerId is or maps to silgrakmarak1309
+  if (role === 'delivery_partner') {
+    const isSilgrak =
+      ownerId.toLowerCase().includes('silgrak') ||
+      ownerId.toLowerCase().includes('rariku');
+    if (isSilgrak) {
+      try {
+        const { data: silgrakWallet } = await supabase
+          .from('wallets')
+          .select('*')
+          .eq('owner_id', 'silgrakmarak1309')
+          .eq('role', 'delivery_partner')
+          .maybeSingle();
+        if (silgrakWallet) {
+          return mapWalletFromDb(silgrakWallet);
+        }
+      } catch {}
+    }
+  }
+
+  // 2. Automatically create new row in Supabase 'public.wallets' with starting balance of 0
+  const now = new Date().toISOString();
+  const newWallet: Wallet = {
+    id: walletId,
+    ownerId: ownerId,
+    role: role,
+    currentBalance: startingBalance,
+    totalEarnings: startingBalance,
+    todayEarnings: 0,
+    pendingEarnings: 0,
+    totalPayouts: 0,
+    updatedAt: now,
+  };
+
+  try {
+    const rowToInsert = {
+      id: walletId,
+      owner_id: ownerId,
+      role: role,
+      current_balance: startingBalance,
+      total_earnings: startingBalance,
+      today_earnings: 0,
+      pending_earnings: 0,
+      total_payouts: 0,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('wallets')
+      .upsert(rowToInsert, { onConflict: 'owner_id,role' })
+      .select()
+      .maybeSingle();
+
+    if (!insertError && inserted) {
+      return mapWalletFromDb(inserted);
+    }
+  } catch (err) {
+    console.warn('Supabase wallet automatic creation error:', err);
+  }
+
+  // 3. Firestore fallback
+  try {
+    const docRef = doc(db, 'wallets', walletId);
+    await setDoc(docRef, newWallet);
+  } catch {}
+
+  return newWallet;
+}
+
+export function listenToWallet(
+  ownerId: string | string[],
+  role: 'seller' | 'delivery_partner',
+  callback: (wallet: Wallet | null) => void
+) {
+  const ids = Array.isArray(ownerId) ? ownerId.filter(Boolean) : [ownerId].filter(Boolean);
+  const primaryOwnerId = ids[0] || '';
+
+  const fetchWallet = async () => {
+    try {
+      // 1. Try finding wallet by any of the candidate ownerIds
+      for (const oid of ids) {
+        const { data, error } = await supabase
+          .from('wallets')
+          .select('*')
+          .eq('owner_id', oid)
+          .eq('role', role)
+          .maybeSingle();
+
+        if (!error && data) {
+          callback(mapWalletFromDb(data));
+          return;
+        }
+      }
+
+      // If not present in Supabase, automatically create it with default balance of 0 using primaryOwnerId
+      const newWallet = await ensureWalletExists(primaryOwnerId, role, 0);
+      callback(newWallet);
+      return;
+    } catch (err) {
+      console.warn('Error fetching or ensuring wallet in listenToWallet:', err);
+    }
+
+    try {
+      for (const oid of ids) {
+        const q = query(collection(db, 'wallets'), where('ownerId', '==', oid), where('role', '==', role));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          callback(snap.docs[0].data() as Wallet);
+          return;
+        }
+      }
+      const fallbackWallet = await ensureWalletExists(primaryOwnerId, role, 0);
+      callback(fallbackWallet);
+    } catch {
+      callback(null);
+    }
+  };
+
+  fetchWallet();
+
+  const channel = createRealtimeChannel(`realtime:wallet_${primaryOwnerId}_${role}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wallets' }, (payload: any) => {
+      const changedOwnerId = payload?.new?.owner_id || payload?.old?.owner_id;
+      if (!changedOwnerId || ids.includes(changedOwnerId)) {
+        fetchWallet();
+      }
+    })
+    .subscribe();
+
+  const unsubs = ids.map((oid) => {
+    const q = query(collection(db, 'wallets'), where('ownerId', '==', oid), where('role', '==', role));
+    return onSnapshot(q, (snap) => {
+      if (!snap.empty) {
+        callback(snap.docs[0].data() as Wallet);
+      }
+    });
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubs.forEach((u) => u());
+  };
+}
+
+export function listenToWalletTransactions(
+  ownerId: string | string[],
+  callback: (txs: WalletTransaction[]) => void
+) {
+  const ids = Array.isArray(ownerId) ? ownerId.filter(Boolean) : [ownerId].filter(Boolean);
+  const primaryId = ids[0] || '';
+
+  const fetchTxs = async () => {
+    try {
+      let queryBuilder = supabase.from('wallet_transactions').select('*');
+      if (ids.length > 1) {
+        queryBuilder = queryBuilder.in('owner_id', ids);
+      } else {
+        queryBuilder = queryBuilder.eq('owner_id', primaryId);
+      }
+      const { data, error } = await queryBuilder.order('created_at', { ascending: false });
+      if (!error && data) {
+        callback(data.map(mapTxFromDb));
+        return;
+      }
+    } catch {}
+
+    const allTxs: WalletTransaction[] = [];
+    try {
+      for (const id of ids) {
+        const q = query(collection(db, 'wallet_transactions'), where('ownerId', '==', id));
+        const snap = await getDocs(q);
+        snap.forEach((d) => allTxs.push(d.data() as WalletTransaction));
+      }
+      allTxs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(allTxs);
+    } catch {
+      callback([]);
+    }
+  };
+
+  fetchTxs();
+
+  const channel = createRealtimeChannel(`realtime:wallet_txs_${primaryId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_transactions' }, () => {
+      fetchTxs();
+    })
+    .subscribe();
+
+  const unsubs = ids.map((id) => {
+    const q = query(collection(db, 'wallet_transactions'), where('ownerId', '==', id));
+    return onSnapshot(q, () => {
+      fetchTxs();
+    });
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubs.forEach((u) => u());
+  };
+}
+
+export function listenToAllWallets(callback: (wallets: Wallet[]) => void) {
+  const fetchAll = async () => {
+    try {
+      const { data, error } = await supabase.from('wallets').select('*');
+      if (!error && data) {
+        callback(data.map(mapWalletFromDb));
+        return;
+      }
+    } catch {}
+    const colRef = collection(db, 'wallets');
+    const snap = await getDocs(colRef);
+    const list: Wallet[] = [];
+    snap.forEach((d) => list.push(d.data() as Wallet));
+    callback(list);
+  };
+  fetchAll();
+
+  const channel = createRealtimeChannel('realtime:all_wallets').on('postgres_changes', { event: '*', schema: 'public', table: 'wallets' }, () => fetchAll()).subscribe();
+  const colRef = collection(db, 'wallets');
+  const unsubFs = onSnapshot(colRef, (snap) => {
+    const list: Wallet[] = [];
+    snap.forEach((d) => list.push(d.data() as Wallet));
+    callback(list);
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export function listenToAllWalletTransactions(callback: (txs: WalletTransaction[]) => void) {
+  const fetchAll = async () => {
+    try {
+      const { data, error } = await supabase.from('wallet_transactions').select('*').order('created_at', { ascending: false });
+      if (!error && data) {
+        callback(data.map(mapTxFromDb));
+        return;
+      }
+    } catch {}
+    const colRef = collection(db, 'wallet_transactions');
+    const snap = await getDocs(colRef);
+    const list: WalletTransaction[] = [];
+    snap.forEach((d) => list.push(d.data() as WalletTransaction));
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(list);
+  };
+  fetchAll();
+
+  const channel = createRealtimeChannel('realtime:all_txs').on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_transactions' }, () => fetchAll()).subscribe();
+  const colRef = collection(db, 'wallet_transactions');
+  const unsubFs = onSnapshot(colRef, (snap) => {
+    const list: WalletTransaction[] = [];
+    snap.forEach((d) => list.push(d.data() as WalletTransaction));
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(list);
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function addWalletTransaction(
+  ownerId: string,
+  role: 'seller' | 'delivery_partner',
+  type: 'credit' | 'debit' | 'payout',
+  amount: number,
+  description: string,
+  referenceId?: string,
+  orderId?: string
+) {
+  // If role is seller, resolve shop.id to shop.owner_id (the authenticated UUID owner_id)
+  let targetOwnerId = ownerId;
+  if (role === 'seller') {
+    try {
+      const { data: shopRow } = await supabase
+        .from('shops')
+        .select('id, owner_id')
+        .or(`id.eq.${ownerId},owner_id.eq.${ownerId}`)
+        .limit(1)
+        .maybeSingle();
+      if (shopRow?.owner_id) {
+        targetOwnerId = shopRow.owner_id;
+      }
+    } catch {}
+  }
+
+  // Get or auto-create the wallet row in Supabase
+  const currentWallet = await ensureWalletExists(targetOwnerId, role, 0);
+  const walletId = currentWallet.id || `wallet_${targetOwnerId}_${role}`;
+
+  let newBalance = currentWallet.currentBalance;
+  let newTotal = currentWallet.totalEarnings;
+  let newToday = currentWallet.todayEarnings;
+  let newPayouts = currentWallet.totalPayouts;
+
+  if (type === 'credit') {
+    newBalance += amount;
+    newTotal += amount;
+    newToday += amount;
+  } else if (type === 'debit' || type === 'payout') {
+    newBalance = Math.max(0, newBalance - amount);
+    if (type === 'payout') {
+      newPayouts += amount;
+    }
+  }
+
+  const updatedWallet: Wallet = {
+    ...currentWallet,
+    currentBalance: newBalance,
+    totalEarnings: newTotal,
+    todayEarnings: newToday,
+    totalPayouts: newPayouts,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+  const tx: WalletTransaction = {
+    id: txId,
+    walletId,
+    ownerId: targetOwnerId,
+    role,
+    type,
+    amount,
+    description,
+    referenceId,
+    orderId,
+    createdAt: new Date().toISOString(),
+  };
+
+  // 1. Supabase persist
+  try {
+    await supabase.from('wallets').upsert(mapWalletToDb(updatedWallet), { onConflict: 'owner_id,role' });
+    await supabase.from('wallet_transactions').insert(mapTxToDb(tx));
+  } catch (e) {
+    console.warn('Supabase wallet transaction save error:', e);
+  }
+
+  // 2. Firestore mirror
+  try {
+    await setDoc(doc(db, 'wallets', walletId), updatedWallet);
+    await setDoc(doc(db, 'wallet_transactions', txId), tx);
+  } catch {}
+}
+
+// =========================================================================
+// PAYOUT REQUESTS
+// =========================================================================
+export function listenToPayoutRequests(callback: (payouts: PayoutRequest[]) => void) {
+  const fetchAll = async () => {
+    try {
+      const { data, error } = await supabase.from('payout_requests').select('*').order('created_at', { ascending: false });
+      if (!error && data) {
+        callback(data.map(mapPayoutFromDb));
+        return;
+      }
+    } catch {}
+    const colRef = collection(db, 'payout_requests');
+    const snap = await getDocs(colRef);
+    const list: PayoutRequest[] = [];
+    snap.forEach((d) => list.push(d.data() as PayoutRequest));
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(list);
+  };
+  fetchAll();
+
+  const channel = createRealtimeChannel('realtime:payout_requests').on('postgres_changes', { event: '*', schema: 'public', table: 'payout_requests' }, () => fetchAll()).subscribe();
+  const colRef = collection(db, 'payout_requests');
+  const unsubFs = onSnapshot(colRef, (snap) => {
+    const list: PayoutRequest[] = [];
+    snap.forEach((d) => list.push(d.data() as PayoutRequest));
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(list);
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export function listenToUserPayouts(
+  requesterId: string | string[],
+  callback: (payouts: PayoutRequest[]) => void
+) {
+  const ids = Array.isArray(requesterId) ? requesterId.filter(Boolean) : [requesterId].filter(Boolean);
+  const primaryId = ids[0] || '';
+
+  const fetchMine = async () => {
+    try {
+      let queryBuilder = supabase.from('payout_requests').select('*');
+      if (ids.length > 1) {
+        queryBuilder = queryBuilder.in('requester_id', ids);
+      } else {
+        queryBuilder = queryBuilder.eq('requester_id', primaryId);
+      }
+      const { data, error } = await queryBuilder.order('created_at', { ascending: false });
+      if (!error && data) {
+        callback(data.map(mapPayoutFromDb));
+        return;
+      }
+    } catch {}
+
+    const allPayouts: PayoutRequest[] = [];
+    try {
+      for (const id of ids) {
+        const q = query(collection(db, 'payout_requests'), where('requesterId', '==', id));
+        const snap = await getDocs(q);
+        snap.forEach((d) => allPayouts.push(d.data() as PayoutRequest));
+      }
+      allPayouts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(allPayouts);
+    } catch {
+      callback([]);
+    }
+  };
+
+  fetchMine();
+
+  const channel = createRealtimeChannel(`realtime:payouts_${primaryId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'payout_requests' }, () => fetchMine())
+    .subscribe();
+
+  const unsubs = ids.map((id) => {
+    const q = query(collection(db, 'payout_requests'), where('requesterId', '==', id));
+    return onSnapshot(q, () => {
+      fetchMine();
+    });
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubs.forEach((u) => u());
+  };
+}
+
+export async function requestPayout(payout: Omit<PayoutRequest, 'id' | 'status' | 'createdAt'>) {
+  const id = 'payout_' + Date.now();
+  const req: PayoutRequest = {
+    ...payout,
+    id,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    await supabase.from('payout_requests').insert(mapPayoutToDb(req));
+  } catch {}
+
+  try {
+    await setDoc(doc(db, 'payout_requests', id), req);
+  } catch {}
+
+  await createNotification({
+    recipientRole: 'admin',
+    title: 'New Payout Request',
+    message: `${payout.requesterName} (${payout.requesterRole}) requested withdrawal of ₹${payout.amount} via UPI: ${payout.upiId}.`,
+    type: 'payout',
+    referenceId: id,
+  });
+
+  return req;
+}
+
+export async function updatePayoutStatus(
+  payoutId: string,
+  status: PayoutStatus,
+  transactionRef?: string,
+  adminNotes?: string
+) {
+  const updates: any = {
+    status,
+    transaction_ref: transactionRef || null,
+    admin_notes: adminNotes || null,
+    processed_at: new Date().toISOString(),
+  };
+
+  try {
+    await supabase.from('payout_requests').update(updates).eq('id', payoutId);
+  } catch {}
+
+  try {
+    const docRef = doc(db, 'payout_requests', payoutId);
+    await updateDoc(docRef, {
+      status,
+      transactionRef: transactionRef || null,
+      adminNotes: adminNotes || null,
+      processedAt: new Date().toISOString(),
+    });
+  } catch {}
+
+  // If status is paid, debit the user's wallet
+  if (status === 'paid') {
+    let payout: PayoutRequest | null = null;
+    try {
+      const { data } = await supabase.from('payout_requests').select('*').eq('id', payoutId).single();
+      if (data) payout = mapPayoutFromDb(data);
+    } catch {}
+
+    if (!payout) {
+      try {
+        const snap = await getDoc(doc(db, 'payout_requests', payoutId));
+        if (snap.exists()) payout = snap.data() as PayoutRequest;
+      } catch {}
+    }
+
+    if (payout) {
+      await addWalletTransaction(
+        payout.requesterId,
+        payout.requesterRole,
+        'payout',
+        payout.amount,
+        `Payout processed via UPI (${payout.upiId}) - Ref: ${transactionRef || 'N/A'}`,
+        payoutId
+      );
+
+      await createNotification({
+        userId: payout.requesterId,
+        recipientRole: payout.requesterRole,
+        title: 'Payout Dispatched!',
+        message: `Your withdrawal of ₹${payout.amount} has been processed via UPI: ${payout.upiId}. Ref: ${transactionRef || 'Direct Transfer'}`,
+        type: 'payout',
+        referenceId: payoutId,
+      });
+    }
+  }
+}
+
+// =========================================================================
+// ORDERS & FULFILLMENT (DYNAMIC SUPABASE QUERY WITH USER IDENTIFIERS)
+// =========================================================================
+export async function fetchCustomerOrdersFromSupabase(
+  userOrId?: { uid?: string; email?: string; phoneNumber?: string } | string
+): Promise<Order[]> {
+  try {
+    const orParts: string[] = [];
+
+    if (typeof userOrId === 'string' && userOrId.trim()) {
+      const cleanId = userOrId.trim();
+      orParts.push(`customer_id.eq.${cleanId}`);
+      if (cleanId.includes('@')) {
+        orParts.push(`customer_email.eq.${cleanId.toLowerCase()}`);
+      }
+    } else if (userOrId && typeof userOrId === 'object') {
+      if (userOrId.uid && userOrId.uid.trim()) {
+        orParts.push(`customer_id.eq.${userOrId.uid.trim()}`);
+      }
+      if (userOrId.email && userOrId.email.trim()) {
+        orParts.push(`customer_email.eq.${userOrId.email.trim().toLowerCase()}`);
+      }
+      if (userOrId.phoneNumber && userOrId.phoneNumber.trim()) {
+        orParts.push(`customer_phone.eq.${userOrId.phoneNumber.trim()}`);
+      }
+    }
+
+    // Only inspect localStorage auth user if no criteria provided yet
+    if (orParts.length === 0) {
+      try {
+        const cached = localStorage.getItem('bazaarx_auth_user');
+        if (cached) {
+          const u = JSON.parse(cached);
+          if (u.uid) orParts.push(`customer_id.eq.${u.uid}`);
+          if (u.email) orParts.push(`customer_email.eq.${u.email.toLowerCase()}`);
+          if (u.phoneNumber) orParts.push(`customer_phone.eq.${u.phoneNumber}`);
+        }
+      } catch {}
+    }
+
+    // Check specific order IDs placed in this active browser session
+    try {
+      const storedOrderIds = JSON.parse(localStorage.getItem('bazaarx_my_order_ids') || '[]');
+      if (Array.isArray(storedOrderIds)) {
+        storedOrderIds.forEach((oid: string) => {
+          if (oid && typeof oid === 'string' && !orParts.includes(`id.eq.${oid}`)) {
+            orParts.push(`id.eq.${oid}`);
+          }
+        });
+      }
+    } catch {}
+
+    const uniqueOrParts = Array.from(new Set(orParts));
+
+    // STRICT CUSTOMER DATA ISOLATION:
+    // If no identifying criteria exists for this customer, return empty array.
+    // NEVER query the full table without customer filter conditions.
+    if (uniqueOrParts.length === 0) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .or(uniqueOrParts.join(','))
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      // Exclude demo records
+      const customerOrders = data.filter(
+        (o) => o.customer_id !== 'demo_customer_uid' && o.customer_email !== 'rahul.customer@example.com'
+      );
+      return customerOrders.map(mapOrderFromDb);
+    }
+  } catch (err) {
+    console.warn('Error fetching customer orders from Supabase:', err);
+  }
+
+  // Fallback: only if user has a verified UID, query Firestore strictly by that customerId
+  try {
+    const uid = typeof userOrId === 'string' ? userOrId : userOrId?.uid;
+    if (uid && uid.trim()) {
+      const q = query(collection(db, 'orders'), where('customerId', '==', uid.trim()));
+      const snap = await getDocs(q);
+      const list: Order[] = [];
+      snap.forEach((d) => list.push(d.data() as Order));
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return list;
+    }
+  } catch {}
+
+  return [];
+}
+
+export function listenToCustomerOrders(
+  userOrId: { uid?: string; email?: string; phoneNumber?: string } | string,
+  callback: (orders: Order[]) => void
+) {
+  const fetchOrders = async () => {
+    const list = await fetchCustomerOrdersFromSupabase(userOrId);
+    callback(list);
+  };
+  fetchOrders();
+
+  const channel = createRealtimeChannel('realtime:all_orders')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchOrders())
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+export async function fetchSellerOrdersFromSupabase(
+  shopOrSellerId?: string | string[] | { id?: string; shopName?: string; ownerId?: string }
+): Promise<SellerOrder[]> {
+  try {
+    let targetShopId = 'shop_1791092440747';
+    let targetShopName = 'Marak shop';
+    const candidateIds: string[] = ['shop_1791092440747'];
+
+    if (typeof shopOrSellerId === 'string' && shopOrSellerId.trim()) {
+      targetShopId = shopOrSellerId.trim();
+      if (!candidateIds.includes(targetShopId)) candidateIds.push(targetShopId);
+    } else if (Array.isArray(shopOrSellerId)) {
+      const filtered = shopOrSellerId.map((s) => String(s).trim()).filter(Boolean);
+      if (filtered.length > 0) {
+        targetShopId = filtered[0];
+        filtered.forEach((id) => {
+          if (!candidateIds.includes(id)) candidateIds.push(id);
+        });
+      }
+    } else if (shopOrSellerId && typeof shopOrSellerId === 'object') {
+      if (shopOrSellerId.id && shopOrSellerId.id.trim()) {
+        targetShopId = shopOrSellerId.id.trim();
+        if (!candidateIds.includes(targetShopId)) candidateIds.push(targetShopId);
+      }
+      if (shopOrSellerId.ownerId && shopOrSellerId.ownerId.trim()) {
+        const oId = shopOrSellerId.ownerId.trim();
+        if (!candidateIds.includes(oId)) candidateIds.push(oId);
+      }
+      if (shopOrSellerId.shopName && shopOrSellerId.shopName.trim()) {
+        targetShopName = shopOrSellerId.shopName.trim();
+      }
+    }
+
+    // Direct query to public.orders table matching the seller_ids array or items
+    const { data: rawOrders, error } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && rawOrders) {
+      const normalizedTargetName = targetShopName.toLowerCase().replace(/\s+/g, ' ').trim();
+
+      const matchingOrders = rawOrders.filter((ord: any) => {
+        // Strict match: seller_ids contains candidate shop ID
+        const sellerIds: string[] = Array.isArray(ord.seller_ids) ? ord.seller_ids : [];
+        const hasSellerId = candidateIds.some((cid) => sellerIds.includes(cid));
+        if (hasSellerId) return true;
+
+        // Or items contain this shopId or shopName matching Marak shop
+        const items: any[] = Array.isArray(ord.items) ? ord.items : [];
+        const hasMatchingItem = items.some((it) => {
+          if (!it) return false;
+          if (it.shopId && candidateIds.includes(it.shopId)) return true;
+          const itShopName = (it.shopName || '').toLowerCase().replace(/\s+/g, ' ').trim();
+          if (itShopName.includes('marak') || (normalizedTargetName && itShopName === normalizedTargetName)) {
+            return true;
+          }
+          return false;
+        });
+
+        return hasMatchingItem;
+      });
+
+      const convertedList: SellerOrder[] = matchingOrders.map((ord: any) => {
+        const master = mapOrderFromDb(ord);
+        const sellerItems = master.items.filter((it) => {
+          if (it.shopId && candidateIds.includes(it.shopId)) return true;
+          const itShopName = (it.shopName || '').toLowerCase().replace(/\s+/g, ' ').trim();
+          if (itShopName.includes('marak') || (normalizedTargetName && itShopName === normalizedTargetName)) {
+            return true;
+          }
+          return true;
+        });
+
+        const itemsToUse = sellerItems.length > 0 ? sellerItems : master.items;
+        const sellerSubtotal = itemsToUse.reduce(
+          (sum, it) => sum + (it.discountPrice || it.price) * it.quantity,
+          0
+        );
+        const commission = Math.round((sellerSubtotal * 5) / 100);
+        const sellerEarnings = sellerSubtotal - commission;
+
+        return {
+          id: `sord_${master.id}_${targetShopId}`,
+          orderId: master.id,
+          sellerId: targetShopId,
+          shopName: itemsToUse[0]?.shopName || targetShopName,
+          customerId: master.customerId,
+          customerName: master.customerName,
+          customerPhone: master.customerPhone,
+          deliveryAddress: master.deliveryAddress || ({} as Address),
+          items: itemsToUse,
+          sellerSubtotal,
+          commissionAmount: commission,
+          sellerEarnings,
+          status: master.orderStatus,
+          createdAt: master.createdAt,
+          updatedAt: master.updatedAt,
+        };
+      });
+
+      return convertedList;
+    }
+  } catch (err) {
+    console.warn('Error fetching seller orders from Supabase:', err);
+  }
+
+  return [];
+}
+
+export function listenToSellerOrders(
+  shopOrSellerId: string | string[] | { id?: string; shopName?: string; ownerId?: string },
+  callback: (orders: SellerOrder[]) => void
+) {
+  const fetchOrders = async () => {
+    const list = await fetchSellerOrdersFromSupabase(shopOrSellerId);
+    callback(list);
+  };
+
+  fetchOrders();
+
+  // Realtime subscription on public.orders so new customer purchases appear instantly on Seller Dashboard
+  const channel = createRealtimeChannel(`realtime:seller_orders_fulfillment_${Date.now()}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'orders' },
+      () => fetchOrders()
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'seller_orders' },
+      () => fetchOrders()
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+export async function fetchAllOrdersFromSupabase(): Promise<Order[]> {
+  const mergedMap = new Map<string, Order>();
+
+  // 1. Supabase primary fetch
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && data && data.length > 0) {
+      data.forEach((row) => {
+        const o = mapOrderFromDb(row);
+        mergedMap.set(o.id, o);
+      });
+    }
+  } catch (e) {
+    console.warn('Error fetching all orders from Supabase:', e);
+  }
+
+  // 2. Firestore fallback & merge
+  try {
+    const colRef = collection(db, 'orders');
+    const snap = await getDocs(colRef);
+    snap.forEach((d) => {
+      const fo = d.data() as Order;
+      if (fo && fo.id) {
+        // If not in Supabase yet, add from Firestore
+        if (!mergedMap.has(fo.id)) {
+          mergedMap.set(fo.id, fo);
+        }
+      }
+    });
+  } catch (fe) {
+    // Firestore error tolerated
+  }
+
+  const list = Array.from(mergedMap.values());
+  list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return list;
+}
+
+export function listenToAllOrders(callback: (orders: Order[]) => void) {
+  const fetchAll = async () => {
+    const list = await fetchAllOrdersFromSupabase();
+    callback(list);
+  };
+  fetchAll();
+
+  // Supabase Realtime channel on public.orders table
+  const channel = createRealtimeChannel('realtime:all_orders_admin')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'orders' },
+      () => fetchAll()
+    )
+    .subscribe();
+
+  // Firestore onSnapshot fallback for dual synchronization
+  let unsubFs = () => {};
+  try {
+    const colRef = collection(db, 'orders');
+    unsubFs = onSnapshot(colRef, () => {
+      fetchAll();
+    }, () => {});
+  } catch {}
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export function listenToDeliveryAssignments(callback: (assignments: DeliveryAssignment[]) => void) {
+  const fetchAll = async () => {
+    try {
+      const { data, error } = await supabase.from('delivery_assignments').select('*').order('created_at', { ascending: false });
+      if (!error && data) {
+        callback(data.map(mapAssignmentFromDb));
+        return;
+      }
+    } catch {}
+    const colRef = collection(db, 'delivery_assignments');
+    const snap = await getDocs(colRef);
+    const list: DeliveryAssignment[] = [];
+    snap.forEach((d) => list.push(d.data() as DeliveryAssignment));
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(list);
+  };
+  fetchAll();
+
+  const channel = createRealtimeChannel('realtime:all_assignments').on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_assignments' }, () => fetchAll()).subscribe();
+  const colRef = collection(db, 'delivery_assignments');
+  const unsubFs = onSnapshot(colRef, (snap) => {
+    const list: DeliveryAssignment[] = [];
+    snap.forEach((d) => list.push(d.data() as DeliveryAssignment));
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(list);
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export function listenToPartnerDeliveries(partnerId: string, callback: (assignments: DeliveryAssignment[]) => void) {
+  const fetchPartner = async () => {
+    try {
+      const list = await fetchPartnerDeliveriesFromSupabase(partnerId);
+      if (list && list.length > 0) {
+        callback(list);
+        return;
+      }
+    } catch {}
+    const colRef = collection(db, 'delivery_assignments');
+    const snap = await getDocs(colRef);
+    const list: DeliveryAssignment[] = [];
+    snap.forEach((d) => {
+      const item = d.data() as DeliveryAssignment;
+      if (item.deliveryPartnerId === partnerId || item.status === 'available') {
+        list.push(item);
+      }
+    });
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(list);
+  };
+  fetchPartner();
+
+  const channel = createRealtimeChannel(`realtime:partner_deliveries_${partnerId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_assignments' }, () => fetchPartner()).subscribe();
+  const colRef = collection(db, 'delivery_assignments');
+  const unsubFs = onSnapshot(colRef, (snap) => {
+    const list: DeliveryAssignment[] = [];
+    snap.forEach((d) => {
+      const item = d.data() as DeliveryAssignment;
+      if (item.deliveryPartnerId === partnerId || item.status === 'available') {
+        list.push(item);
+      }
+    });
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(list);
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export function listenToUsers(callback: (users: UserProfile[]) => void) {
+  const fetchUsers = async () => {
+    try {
+      const { data, error } = await supabase.from('users').select('*').order('created_at', { ascending: false });
+      if (!error && data) {
+        callback(
+          data.map((u: any) => ({
+            uid: u.uid,
+            email: u.email || '',
+            displayName: u.display_name || '',
+            role: u.role || 'customer',
+            phoneNumber: u.phone_number || undefined,
+            photoURL: u.photo_url || undefined,
+            deliveryPinCode: u.delivery_pin_code || '123456',
+            createdAt: u.created_at || new Date().toISOString(),
+            updatedAt: u.updated_at || undefined,
+          }))
+        );
+        return;
+      }
+    } catch {}
+    const colRef = collection(db, 'users');
+    const snap = await getDocs(colRef);
+    const list: UserProfile[] = [];
+    snap.forEach((d) => list.push(d.data() as UserProfile));
+    list.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
+    callback(list);
+  };
+  fetchUsers();
+
+  const channel = createRealtimeChannel('realtime:users').on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => fetchUsers()).subscribe();
+  const colRef = collection(db, 'users');
+  const unsubFs = onSnapshot(colRef, (snap) => {
+    const list: UserProfile[] = [];
+    snap.forEach((d) => list.push(d.data() as UserProfile));
+    list.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
+    callback(list);
+  });
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+
+export async function reassignDeliveryPartner(assignmentId: string, partner: DeliveryPartner) {
+  const now = new Date().toISOString();
+
+  // 1. Supabase update
+  try {
+    const { data: asgn } = await supabase.from('delivery_assignments').select('order_id').eq('id', assignmentId).single();
+    await supabase.from('delivery_assignments').update({
+      status: 'assigned',
+      delivery_partner_id: partner.id,
+      delivery_partner_name: partner.fullName,
+      delivery_partner_phone: partner.phoneNumber,
+      updated_at: now,
+    }).eq('id', assignmentId);
+
+    // Save assigned rider directly in orders table
+    if (asgn?.order_id) {
+      await supabase.from('orders').update({
+        delivery_partner_id: partner.id,
+        delivery_partner_name: partner.fullName,
+        delivery_partner_phone: partner.phoneNumber,
+        updated_at: now,
+      }).eq('id', asgn.order_id);
+    }
+  } catch {}
+
+  // 2. Firestore mirror
+  try {
+    const docRef = doc(db, 'delivery_assignments', assignmentId);
+    await updateDoc(docRef, {
+      status: 'assigned',
+      deliveryPartnerId: partner.id,
+      deliveryPartnerName: partner.fullName,
+      deliveryPartnerPhone: partner.phoneNumber,
+      updatedAt: now,
+    });
+  } catch {}
+
+  await createNotification({
+    userId: partner.id,
+    recipientRole: 'delivery_partner',
+    title: 'Reassigned Delivery Order',
+    message: `You have been reassigned an order assignment #${assignmentId}.`,
+    type: 'delivery',
+    referenceId: assignmentId,
+  });
+}
+
+// Generate a random 4-digit OTP for delivery verification
+export function generateDeliveryOTP(): string {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
+// =========================================================================
+// CREATE ORDER (BACKEND VALIDATION & ATOMIC ORDER CREATION)
+// =========================================================================
+export async function createOrder(
+  customerId: string,
+  customerName: string,
+  customerEmail: string,
+  customerPhone: string,
+  deliveryAddress: Address,
+  items: OrderItem[],
+  paymentMethod: Order['paymentMethod'],
+  settings: PlatformSettings,
+  customDeliveryCharge?: number,
+  deliveryVillage?: string,
+  transactionId?: string
+): Promise<Order> {
+  const orderId = 'ORD-' + Date.now().toString().slice(-6) + '-' + Math.floor(100 + Math.random() * 900);
+  const otp = generateDeliveryOTP();
+
+  // Group items by seller
+  const sellerItemsMap: Record<string, OrderItem[]> = {};
+  items.forEach((item) => {
+    if (!sellerItemsMap[item.shopId]) {
+      sellerItemsMap[item.shopId] = [];
+    }
+    sellerItemsMap[item.shopId].push(item);
+  });
+
+  const sellerIds = Object.keys(sellerItemsMap);
+
+  // =========================================================================
+  // MANDATORY BACKEND SECURITY CHECK: Local Buyer-Seller PIN Code Matching
+  // =========================================================================
+  if (settings.localPinCodeRestriction) {
+    const buyerPin = (deliveryAddress.postalCode || '').trim();
+    if (!buyerPin) {
+      throw new Error('Delivery address must contain a valid 6-digit PIN code.');
+    }
+
+    // 1. PostgreSQL Database RPC check
+    try {
+      const { data: rpcValidation } = await supabase.rpc('check_order_local_pin_restriction', {
+        p_buyer_pin: buyerPin,
+        p_shop_ids: sellerIds,
+      });
+      if (rpcValidation && rpcValidation.length > 0 && !rpcValidation[0].allowed) {
+        throw new Error(rpcValidation[0].message || 'Sorry, this product is currently available only in your local area.');
+      }
+    } catch (rpcErr: any) {
+      if (rpcErr?.message && rpcErr.message.includes('Sorry, this product')) {
+        throw rpcErr;
+      }
+    }
+
+    // 2. Direct table verification for every single seller in this order
+    for (const shopId of sellerIds) {
+      let sellerServicePin = '';
+
+      // Check Supabase first
+      try {
+        const { data: sRow } = await supabase
+          .from('shops')
+          .select('service_pin_code, postal_code')
+          .eq('id', shopId)
+          .single();
+        if (sRow) {
+          sellerServicePin = (sRow.service_pin_code || sRow.postal_code || '').trim();
+        }
+      } catch {}
+
+      // Fallback check Firestore
+      if (!sellerServicePin) {
+        try {
+          const shopSnap = await getDoc(doc(db, 'shops', shopId));
+          if (shopSnap.exists()) {
+            const shop = shopSnap.data() as Shop;
+            sellerServicePin = (shop.servicePinCode || shop.postalCode || '').trim();
+          }
+        } catch {}
+      }
+
+      if (sellerServicePin && sellerServicePin !== buyerPin) {
+        throw new Error('Sorry, this product is currently available only in your local area.');
+      }
+    }
+  }
+
+  const subtotal = items.reduce((sum, it) => sum + it.discountPrice * it.quantity, 0);
+  const deliveryCharge = customDeliveryCharge !== undefined ? customDeliveryCharge : settings.deliveryBaseCharge;
+  const platformFee = settings.platformFee;
+  const totalAmount = subtotal + deliveryCharge + platformFee;
+
+  const resolvedVillage = deliveryVillage || deliveryAddress.village || undefined;
+
+  const cleanUtr = (transactionId || '').trim();
+  const initialOrderStatus: OrderStatus = 'pending_verification';
+  const initialPaymentStatus: PaymentStatus = 'pending';
+
+  const order: Order = {
+    id: orderId,
+    customerId,
+    customerName,
+    customerEmail,
+    customerPhone,
+    deliveryAddress,
+    deliveryVillage: resolvedVillage,
+    totalAmount,
+    subtotal,
+    deliveryCharge,
+    platformFee,
+    paymentMethod,
+    paymentStatus: initialPaymentStatus,
+    orderStatus: initialOrderStatus,
+    transactionId: cleanUtr || undefined,
+    deliveryOtp: otp,
+    items,
+    sellerIds,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    statusHistory: [
+      {
+        status: initialOrderStatus,
+        timestamp: new Date().toISOString(),
+        note: cleanUtr
+          ? `Order placed via UPI. 12-digit UTR: ${cleanUtr}. Payment verification pending.`
+          : 'Order placed. Pending verification.',
+      },
+    ],
+  };
+
+  // 1. Supabase Order Insert
+  try {
+    const dbPayload = mapOrderToDb(order);
+    dbPayload.transaction_id = cleanUtr || null;
+    dbPayload.order_status = 'pending_verification';
+    dbPayload.payment_status = 'pending';
+
+    let { error: insErr } = await supabase.from('orders').insert(dbPayload);
+    if (insErr) {
+      console.warn('Supabase master order insert initial attempt:', insErr);
+      // Fallback: If Postgres check constraint does not permit 'pending_verification' yet, use 'pending'
+      if (insErr.message?.includes('orders_order_status_check') || insErr.code === '23514') {
+        const adjustedPayload = { ...dbPayload, order_status: 'pending' };
+        const res = await supabase.from('orders').insert(adjustedPayload);
+        insErr = res.error;
+      }
+      // Fallback: If transaction_id column missing in schema cache
+      if (insErr && (insErr.message?.includes('transaction_id') || insErr.code === 'PGRST204')) {
+        const fallbackPayload = { ...dbPayload };
+        delete fallbackPayload.transaction_id;
+        await supabase.from('orders').insert(fallbackPayload);
+      }
+    }
+  } catch (e) {
+    console.warn('Supabase master order insert notice:', e);
+  }
+
+  // 1b. Supabase Order Items (Normalized)
+  try {
+    if (items && items.length > 0) {
+      const orderItemRows = items.map((it, idx) => ({
+        id: `oi_${orderId}_${idx}`,
+        order_id: orderId,
+        product_id: it.productId,
+        shop_id: it.shopId,
+        shop_name: it.shopName,
+        name: it.name,
+        price: it.price,
+        discount_price: it.discountPrice,
+        quantity: it.quantity,
+        image: it.image || null,
+      }));
+      await supabase.from('order_items').insert(orderItemRows);
+    }
+  } catch (e) {
+    console.warn('Supabase order_items insert notice:', e);
+  }
+
+  // 1c. Supabase Payment record
+  try {
+    await supabase.from('payments').insert({
+      id: `pay_${orderId}`,
+      order_id: orderId,
+      amount: totalAmount,
+      method: paymentMethod,
+      status: 'pending',
+      reference_id: cleanUtr || `ref_${Date.now()}`,
+    });
+  } catch (e) {
+    console.warn('Supabase payment insert notice:', e);
+  }
+
+  // 2. Firestore Order Mirror
+  try {
+    await setDoc(doc(db, 'orders', orderId), order);
+  } catch {}
+
+  // 3. Create Seller Sub-Orders & Delivery Assignments
+  for (const shopId of sellerIds) {
+    const sellerItems = sellerItemsMap[shopId];
+    const sellerSubtotal = sellerItems.reduce((sum, it) => sum + it.discountPrice * it.quantity, 0);
+    const commission = Math.round((sellerSubtotal * settings.sellerCommissionPercent) / 100);
+    const sellerEarnings = sellerSubtotal - commission;
+
+    const sellerOrderId = `sord_${orderId}_${shopId}`;
+    const sellerOrder: SellerOrder = {
+      id: sellerOrderId,
+      orderId,
+      sellerId: shopId,
+      shopName: sellerItems[0]?.shopName || 'Shop',
+      customerId,
+      customerName,
+      customerPhone,
+      deliveryAddress,
+      items: sellerItems,
+      sellerSubtotal,
+      commissionAmount: commission,
+      sellerEarnings,
+      status: initialOrderStatus,
+      transactionId: cleanUtr || undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Save seller order in Supabase & Firestore
+    try {
+      const sordPayload = mapSellerOrderToDb(sellerOrder);
+      sordPayload.transaction_id = cleanUtr || null;
+      sordPayload.status = 'pending_verification';
+      let { error: sInsErr } = await supabase.from('seller_orders').insert(sordPayload);
+      if (sInsErr && (sInsErr.message?.includes('seller_orders_status_check') || sInsErr.code === '23514')) {
+        const adjustedSord = { ...sordPayload, status: 'pending' };
+        await supabase.from('seller_orders').insert(adjustedSord);
+      }
+    } catch {}
+    try {
+      await setDoc(doc(db, 'seller_orders', sellerOrderId), sellerOrder);
+    } catch {}
+
+    // Lookup physical shop address for rider pickup
+    let shopAddress = 'Local Market complex';
+    let shopPhone = '+91 98765 00000';
+    try {
+      const { data: sData } = await supabase.from('shops').select('shop_address, phone_number').eq('id', shopId).single();
+      if (sData) {
+        shopAddress = sData.shop_address || shopAddress;
+        shopPhone = sData.phone_number || shopPhone;
+      }
+    } catch {}
+
+    // Create delivery assignment
+    const assignmentId = `asgn_${orderId}_${shopId}`;
+    const assignment: DeliveryAssignment = {
+      id: assignmentId,
+      orderId,
+      sellerOrderId,
+      shopId,
+      shopName: sellerItems[0]?.shopName || 'Shop',
+      shopAddress,
+      shopPhone,
+      customerName,
+      customerPhone,
+      deliveryAddress,
+      deliveryFee: deliveryCharge,
+      earningAmount: deliveryCharge,
+      status: 'available',
+      otp,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await supabase.from('delivery_assignments').insert(mapAssignmentToDb(assignment));
+    } catch {}
+    try {
+      await setDoc(doc(db, 'delivery_assignments', assignmentId), assignment);
+    } catch {}
+
+    // Increment shop total sales
+    try {
+      const { data: currentShop } = await supabase.from('shops').select('total_sales, owner_id').eq('id', shopId).single();
+      if (currentShop) {
+        await supabase.from('shops').update({ total_sales: (currentShop.total_sales || 0) + 1 }).eq('id', shopId);
+        if (currentShop.owner_id && currentShop.owner_id !== shopId) {
+          // Send notification directly to shop owner's account UID
+          await createNotification({
+            userId: currentShop.owner_id,
+            recipientRole: 'seller',
+            title: '🛍️ New Order Received!',
+            message: `You have received a new order #${orderId} with ${sellerItems.length} item(s) from ${customerName}.`,
+            type: 'order',
+            referenceId: orderId,
+          });
+        }
+      }
+    } catch {}
+
+    // Notify seller by shopId
+    await createNotification({
+      userId: shopId,
+      recipientRole: 'seller',
+      title: '🛍️ New Order Received!',
+      message: `You have received a new order #${orderId} with ${sellerItems.length} item(s) from ${customerName}.`,
+      type: 'order',
+      referenceId: orderId,
+    });
+  }
+
+  // Notify available delivery partners
+  await createNotification({
+    recipientRole: 'delivery_partner',
+    title: '📦 New Delivery Available!',
+    message: `A new local delivery order #${orderId} is ready in your zone (Earn ₹${settings.deliveryPartnerEarningPerOrder}).`,
+    type: 'delivery',
+    referenceId: orderId,
+  });
+
+  return order;
+}
+
+export async function updateSellerOrderStatus(
+  sellerOrderId: string,
+  newStatus: OrderStatus,
+  shopDetails?: {
+    shopId?: string;
+    shopName?: string;
+    shopAddress?: string;
+    shopPhone?: string;
+  }
+) {
+  const now = new Date().toISOString();
+
+  // 1. Update master public.orders table
+  try {
+    let masterOrderId = sellerOrderId;
+    if (sellerOrderId.startsWith('sord_')) {
+      const parts = sellerOrderId.replace(/^sord_/, '').split('_');
+      masterOrderId = parts[0];
+    }
+    await supabase.from('orders').update({ order_status: newStatus, updated_at: now }).eq('id', masterOrderId);
+  } catch {}
+
+  // 2. Update public.seller_orders table
+  try {
+    await supabase.from('seller_orders').update({ status: newStatus, updated_at: now }).eq('id', sellerOrderId);
+  } catch {}
+  try {
+    const sordRef = doc(db, 'seller_orders', sellerOrderId);
+    await updateDoc(sordRef, { status: newStatus, updatedAt: now });
+  } catch {}
+
+  // 3. Update assignment status if ready
+  try {
+    const { data: sord } = await supabase.from('seller_orders').select('*').eq('id', sellerOrderId).single();
+    if (sord && (newStatus === 'packed' || newStatus === 'ready_for_pickup')) {
+      const assignmentUpdates: any = { status: 'available', updated_at: now };
+      if (shopDetails?.shopAddress) assignmentUpdates.shop_address = shopDetails.shopAddress;
+      if (shopDetails?.shopPhone) assignmentUpdates.shop_phone = shopDetails.shopPhone;
+      await supabase.from('delivery_assignments').update(assignmentUpdates).eq('seller_order_id', sellerOrderId);
+    }
+  } catch {}
+}
+
+export async function updateOrderStatus(
+  orderId: string,
+  newStatus: OrderStatus,
+  paymentStatus?: PaymentStatus
+) {
+  const now = new Date().toISOString();
+  const updatePayload: any = { order_status: newStatus, updated_at: now };
+  if (paymentStatus) {
+    updatePayload.payment_status = paymentStatus;
+  }
+  try {
+    await supabase.from('orders').update(updatePayload).eq('id', orderId);
+  } catch {}
+  try {
+    const sOrdersUpdate: any = { status: newStatus, updated_at: now };
+    await supabase.from('seller_orders').update(sOrdersUpdate).eq('order_id', orderId);
+  } catch {}
+  try {
+    if (newStatus === 'confirmed') {
+      await supabase.from('delivery_assignments').update({ status: 'available', updated_at: now }).eq('order_id', orderId);
+    } else if (newStatus === 'cancelled') {
+      await supabase.from('delivery_assignments').update({ status: 'cancelled', updated_at: now }).eq('order_id', orderId);
+    }
+  } catch {}
+  try {
+    const ordRef = doc(db, 'orders', orderId);
+    await updateDoc(ordRef, updatePayload);
+  } catch {}
+}
+
+export async function verifyOrderPayment(orderId: string) {
+  const now = new Date().toISOString();
+
+  // 1. Fetch current order to ensure we have latest details
+  let orderData: any = null;
+  try {
+    const { data } = await supabase.from('orders').select('*').eq('id', orderId).single();
+    orderData = data;
+  } catch {}
+
+  const currentHistory = Array.isArray(orderData?.status_history) ? orderData.status_history : [];
+  const updatedHistory = [
+    ...currentHistory,
+    { status: 'confirmed', timestamp: now, note: 'Payment verified by Admin (Partner Hub). Order confirmed & dispatched to shop.' }
+  ];
+
+  // 2. Update master public.orders table
+  try {
+    await supabase.from('orders').update({
+      order_status: 'confirmed',
+      payment_status: 'paid',
+      status_history: updatedHistory,
+      updated_at: now,
+    }).eq('id', orderId);
+  } catch (err) {
+    console.warn('verifyOrderPayment orders update error:', err);
+  }
+
+  // 3. Update public.seller_orders table
+  try {
+    await supabase.from('seller_orders').update({
+      status: 'confirmed',
+      updated_at: now,
+    }).eq('order_id', orderId);
+  } catch (err) {
+    console.warn('verifyOrderPayment seller_orders update error:', err);
+  }
+
+  // 4. Ensure delivery_assignments in Supabase has status 'available' so delivery partner fleet immediately sees it
+  try {
+    const { data: existingAssignments } = await supabase
+      .from('delivery_assignments')
+      .select('id')
+      .eq('order_id', orderId);
+
+    const dynamicCharge = orderData?.delivery_charge || 20;
+
+    if (existingAssignments && existingAssignments.length > 0) {
+      await supabase.from('delivery_assignments').update({
+        status: 'available',
+        delivery_fee: dynamicCharge,
+        earning_amount: dynamicCharge,
+        updated_at: now,
+      }).eq('order_id', orderId);
+    } else if (orderData) {
+      // Auto-create assignment with customer OTP (e.g., 8228) so rider can accept immediately
+      const items = Array.isArray(orderData.items) ? orderData.items : [];
+      const shopId = orderData.seller_ids?.[0] || items[0]?.shopId || 'shop_1791092440747';
+      const assignmentId = `asgn_${orderId}_${shopId}`;
+      const assignmentPayload = {
+        id: assignmentId,
+        order_id: orderId,
+        seller_order_id: `sord_${orderId}_${shopId}`,
+        shop_id: shopId,
+        shop_name: items[0]?.shopName || 'Marak shop',
+        shop_address: 'Rongara bazaar',
+        shop_phone: '+91 6909515061',
+        customer_name: orderData.customer_name || 'Customer',
+        customer_phone: orderData.customer_phone || '',
+        delivery_address: orderData.delivery_address || {},
+        delivery_fee: dynamicCharge,
+        earning_amount: dynamicCharge,
+        status: 'available',
+        otp: orderData.delivery_otp || '8228',
+        created_at: now,
+        updated_at: now,
+      };
+      await supabase.from('delivery_assignments').insert(assignmentPayload);
+    }
+  } catch (err) {
+    console.warn('verifyOrderPayment delivery_assignments update error:', err);
+  }
+
+  // 5. Update Firestore for dual sync
+  try {
+    const ordRef = doc(db, 'orders', orderId);
+    await updateDoc(ordRef, {
+      orderStatus: 'confirmed',
+      paymentStatus: 'paid',
+      statusHistory: updatedHistory,
+      updatedAt: now,
+    });
+  } catch {}
+
+  // 6. Notify seller
+  try {
+    const sellerIds = Array.isArray(orderData?.seller_ids) ? orderData.seller_ids : [];
+    for (const sId of sellerIds) {
+      await createNotification({
+        userId: sId,
+        recipientRole: 'seller',
+        title: '✅ Payment Verified!',
+        message: `Order #${orderId} payment has been verified by Admin. Please begin preparation.`,
+        type: 'order',
+        referenceId: orderId,
+      });
+    }
+  } catch {}
+
+  return { success: true };
+}
+
+export async function rejectOrderPayment(orderId: string, reason?: string) {
+  const now = new Date().toISOString();
+  const rejectNote = reason || 'Payment verification rejected / fake UTR number.';
+
+  let orderData: any = null;
+  try {
+    const { data } = await supabase.from('orders').select('*').eq('id', orderId).single();
+    orderData = data;
+  } catch {}
+
+  const currentHistory = Array.isArray(orderData?.status_history) ? orderData.status_history : [];
+  const updatedHistory = [
+    ...currentHistory,
+    { status: 'cancelled', timestamp: now, note: rejectNote }
+  ];
+
+  try {
+    await supabase.from('orders').update({
+      order_status: 'cancelled',
+      payment_status: 'failed',
+      status_history: updatedHistory,
+      updated_at: now,
+    }).eq('id', orderId);
+  } catch {}
+
+  try {
+    await supabase.from('seller_orders').update({
+      status: 'cancelled',
+      updated_at: now,
+    }).eq('order_id', orderId);
+  } catch {}
+
+  try {
+    await supabase.from('delivery_assignments').update({
+      status: 'cancelled',
+      updated_at: now,
+    }).eq('order_id', orderId);
+  } catch {}
+
+  try {
+    const ordRef = doc(db, 'orders', orderId);
+    await updateDoc(ordRef, {
+      orderStatus: 'cancelled',
+      paymentStatus: 'failed',
+      statusHistory: updatedHistory,
+      updatedAt: now,
+    });
+  } catch {}
+
+  return { success: true };
+}
+
+export async function fetchPartnerDeliveriesFromSupabase(partnerId?: string): Promise<DeliveryAssignment[]> {
+  try {
+    let query = supabase.from('delivery_assignments').select('*').order('created_at', { ascending: false });
+    if (partnerId && partnerId.trim()) {
+      query = query.or(`delivery_partner_id.eq.${partnerId},status.eq.available`);
+    } else {
+      query = query.eq('status', 'available');
+    }
+    const { data, error } = await query;
+    if (!error && data) {
+      // Retrieve dynamic delivery charges from public.orders table for exact location/village rate
+      const orderIds = data.map((d: any) => d.order_id).filter(Boolean);
+      let orderChargeMap: Record<string, number> = {};
+      if (orderIds.length > 0) {
+        try {
+          const { data: ords } = await supabase.from('orders').select('id, delivery_charge').in('id', orderIds);
+          if (ords) {
+            ords.forEach((o: any) => {
+              if (o.id && typeof o.delivery_charge === 'number') {
+                orderChargeMap[o.id] = o.delivery_charge;
+              }
+            });
+          }
+        } catch {}
+      }
+
+      return data.map((row: any) => {
+        const asgn = mapAssignmentFromDb(row);
+        const dynamicFee = orderChargeMap[asgn.orderId];
+        if (dynamicFee !== undefined && dynamicFee > 0) {
+          asgn.earningAmount = dynamicFee;
+          asgn.deliveryFee = dynamicFee;
+        } else if (asgn.earningAmount === 0 && asgn.deliveryFee > 0) {
+          asgn.earningAmount = asgn.deliveryFee;
+        }
+        return asgn;
+      });
+    }
+  } catch (err) {
+    console.warn('Error fetching partner deliveries from Supabase:', err);
+  }
+  return [];
+}
+
+export async function acceptDeliveryAssignment(assignmentId: string, partner: DeliveryPartner) {
+  const now = new Date().toISOString();
+
+  // 1. Fetch assignment to obtain order_id
+  let targetOrderId: string | null = null;
+  try {
+    const { data: asgn } = await supabase.from('delivery_assignments').select('order_id').eq('id', assignmentId).single();
+    if (asgn?.order_id) targetOrderId = asgn.order_id;
+  } catch {}
+
+  // 2. Update delivery_assignments with active rider profile (id, name, phone)
+  try {
+    await supabase.from('delivery_assignments').update({
+      status: 'assigned',
+      delivery_partner_id: partner.id,
+      delivery_partner_name: partner.fullName,
+      delivery_partner_phone: partner.phoneNumber,
+      updated_at: now,
+    }).eq('id', assignmentId);
+  } catch {}
+
+  // 3. Update orders table with active rider profile (id, name, phone) and order_status
+  if (targetOrderId) {
+    try {
+      await supabase.from('orders').update({
+        order_status: 'assigned_to_delivery_partner',
+        delivery_partner_id: partner.id,
+        delivery_partner_name: partner.fullName,
+        delivery_partner_phone: partner.phoneNumber,
+        updated_at: now,
+      }).eq('id', targetOrderId);
+    } catch {}
+  }
+
+  // 4. Mirror to Firestore
+  try {
+    const docRef = doc(db, 'delivery_assignments', assignmentId);
+    await updateDoc(docRef, {
+      status: 'assigned',
+      deliveryPartnerId: partner.id,
+      deliveryPartnerName: partner.fullName,
+      deliveryPartnerPhone: partner.phoneNumber,
+      updatedAt: now,
+    });
+    if (targetOrderId) {
+      await updateDoc(doc(db, 'orders', targetOrderId), {
+        orderStatus: 'assigned_to_delivery_partner',
+        deliveryPartnerId: partner.id,
+        deliveryPartnerName: partner.fullName,
+        deliveryPartnerPhone: partner.phoneNumber,
+        updatedAt: now,
+      });
+    }
+  } catch {}
+
+  // Direct notification to delivery partner
+  await createNotification({
+    userId: partner.id,
+    recipientRole: 'delivery_partner',
+    title: '🛵 Order Assigned to You!',
+    message: `Delivery assignment #${assignmentId} is now assigned to you. Head to pickup!`,
+    type: 'delivery',
+    referenceId: assignmentId,
+  });
+}
+
+export async function markDeliveryPickedUp(assignmentId: string) {
+  const now = new Date().toISOString();
+
+  let targetOrderId: string | null = null;
+  try {
+    const { data: asgn } = await supabase.from('delivery_assignments').select('order_id').eq('id', assignmentId).single();
+    if (asgn?.order_id) targetOrderId = asgn.order_id;
+  } catch {}
+
+  try {
+    await supabase.from('delivery_assignments').update({ status: 'picked_up', updated_at: now }).eq('id', assignmentId);
+    if (targetOrderId) {
+      await supabase.from('orders').update({ order_status: 'picked_up', updated_at: now }).eq('id', targetOrderId);
+    }
+  } catch {}
+  try {
+    const docRef = doc(db, 'delivery_assignments', assignmentId);
+    await updateDoc(docRef, { status: 'picked_up', updatedAt: now });
+    if (targetOrderId) {
+      await updateDoc(doc(db, 'orders', targetOrderId), { orderStatus: 'picked_up', updatedAt: now });
+    }
+  } catch {}
+}
+
+export async function markDeliveryOutForDelivery(assignmentId: string) {
+  const now = new Date().toISOString();
+
+  let targetOrderId: string | null = null;
+  try {
+    const { data: asgn } = await supabase.from('delivery_assignments').select('order_id').eq('id', assignmentId).single();
+    if (asgn?.order_id) targetOrderId = asgn.order_id;
+  } catch {}
+
+  try {
+    await supabase.from('delivery_assignments').update({ status: 'out_for_delivery', updated_at: now }).eq('id', assignmentId);
+    if (targetOrderId) {
+      await supabase.from('orders').update({ order_status: 'out_for_delivery', updated_at: now }).eq('id', targetOrderId);
+    }
+  } catch {}
+  try {
+    const docRef = doc(db, 'delivery_assignments', assignmentId);
+    await updateDoc(docRef, { status: 'out_for_delivery', updatedAt: now });
+    if (targetOrderId) {
+      await updateDoc(doc(db, 'orders', targetOrderId), { orderStatus: 'out_for_delivery', updatedAt: now });
+    }
+  } catch {}
+}
+
+export async function completeDeliveryWithOtp(assignmentId: string, enteredOtp: string): Promise<{ success: boolean; message: string }> {
+  let assignment: DeliveryAssignment | null = null;
+
+  try {
+    const { data } = await supabase.from('delivery_assignments').select('*').eq('id', assignmentId).single();
+    if (data) assignment = mapAssignmentFromDb(data);
+  } catch {}
+
+  if (!assignment) {
+    try {
+      const snap = await getDoc(doc(db, 'delivery_assignments', assignmentId));
+      if (snap.exists()) assignment = snap.data() as DeliveryAssignment;
+    } catch {}
+  }
+
+  if (!assignment) {
+    return { success: false, message: 'Delivery assignment not found.' };
+  }
+
+  // Verify against orders table delivery_otp directly as source of truth
+  let expectedOtp = assignment.otp ? assignment.otp.trim() : '';
+  try {
+    const { data: ordRow } = await supabase.from('orders').select('delivery_otp').eq('id', assignment.orderId).single();
+    if (ordRow?.delivery_otp) {
+      expectedOtp = String(ordRow.delivery_otp).trim();
+    }
+  } catch {}
+
+  const cleanEnteredOtp = (enteredOtp || '').trim().replace(/\D/g, '');
+
+  if (!expectedOtp || cleanEnteredOtp !== expectedOtp) {
+    return {
+      success: false,
+      message: 'Invalid OTP! Customer se unke app par dikh raha sahi 4-digit Delivery Code pooch kar enter karein.',
+    };
+  }
+
+  const now = new Date().toISOString();
+
+  // 1. Mark assignment delivered in Supabase & Firestore while safely preserving rider details in orders table
+  try {
+    await supabase.from('delivery_assignments').update({ status: 'delivered', updated_at: now }).eq('id', assignmentId);
+
+    const orderDeliveredPayload: any = {
+      order_status: 'delivered',
+      payment_status: 'paid',
+      updated_at: now,
+    };
+    if (assignment.deliveryPartnerId) {
+      orderDeliveredPayload.delivery_partner_id = assignment.deliveryPartnerId;
+    }
+    if (assignment.deliveryPartnerName) {
+      orderDeliveredPayload.delivery_partner_name = assignment.deliveryPartnerName;
+    }
+    if (assignment.deliveryPartnerPhone) {
+      orderDeliveredPayload.delivery_partner_phone = assignment.deliveryPartnerPhone;
+    }
+
+    await supabase.from('orders').update(orderDeliveredPayload).eq('id', assignment.orderId);
+    if (assignment.sellerOrderId) {
+      await supabase.from('seller_orders').update({ status: 'delivered', updated_at: now }).eq('id', assignment.sellerOrderId);
+    }
+  } catch {}
+
+  try {
+    await updateDoc(doc(db, 'delivery_assignments', assignmentId), { status: 'delivered', updatedAt: now });
+    const fsOrderUpdate: any = { orderStatus: 'delivered', paymentStatus: 'paid', updatedAt: now };
+    if (assignment.deliveryPartnerId) fsOrderUpdate.deliveryPartnerId = assignment.deliveryPartnerId;
+    if (assignment.deliveryPartnerName) fsOrderUpdate.deliveryPartnerName = assignment.deliveryPartnerName;
+    if (assignment.deliveryPartnerPhone) fsOrderUpdate.deliveryPartnerPhone = assignment.deliveryPartnerPhone;
+    await updateDoc(doc(db, 'orders', assignment.orderId), fsOrderUpdate);
+    if (assignment.sellerOrderId) {
+      await updateDoc(doc(db, 'seller_orders', assignment.sellerOrderId), { status: 'delivered', updatedAt: now });
+    }
+  } catch {}
+
+  // 2. Credit seller wallet
+  if (assignment.sellerOrderId) {
+    try {
+      let sord: SellerOrder | null = null;
+      const { data } = await supabase.from('seller_orders').select('*').eq('id', assignment.sellerOrderId).single();
+      if (data) sord = mapSellerOrderFromDb(data);
+
+      if (sord) {
+        await addWalletTransaction(
+          sord.sellerId,
+          'seller',
+          'credit',
+          sord.sellerEarnings,
+          `Earnings for Order #${assignment.orderId}`,
+          assignment.sellerOrderId,
+          assignment.orderId
+        );
+      }
+    } catch {}
+  }
+
+  // 3. Credit rider wallet with EXACT dynamic delivery charge from orders table
+  let finalRiderEarning = assignment.earningAmount;
+  try {
+    const { data: ord } = await supabase
+      .from('orders')
+      .select('delivery_charge')
+      .eq('id', assignment.orderId)
+      .single();
+    if (ord && typeof ord.delivery_charge === 'number' && ord.delivery_charge > 0) {
+      finalRiderEarning = ord.delivery_charge;
+    }
+  } catch {}
+
+  if (assignment.deliveryPartnerId && finalRiderEarning > 0) {
+    await addWalletTransaction(
+      assignment.deliveryPartnerId,
+      'delivery_partner',
+      'credit',
+      finalRiderEarning,
+      `Delivery earning for Order #${assignment.orderId} (₹${finalRiderEarning})`,
+      assignment.id,
+      assignment.orderId
+    );
+
+    // If partner is Silgrak / maps to super admin account, also guarantee primary wallet balance sync
+    try {
+      const { data: dp } = await supabase
+        .from('delivery_partners')
+        .select('email, id')
+        .eq('id', assignment.deliveryPartnerId)
+        .maybeSingle();
+      if (
+        dp?.email &&
+        dp.email.toLowerCase().includes('silgrakmarak1309') &&
+        assignment.deliveryPartnerId !== 'silgrakmarak1309'
+      ) {
+        await addWalletTransaction(
+          'silgrakmarak1309',
+          'delivery_partner',
+          'credit',
+          finalRiderEarning,
+          `Delivery earning for Order #${assignment.orderId} (₹${finalRiderEarning})`,
+          assignment.id,
+          assignment.orderId
+        );
+      }
+    } catch {}
+  }
+
+  // 4. Notifications
+  await createNotification({
+    userId: assignment.customerName,
+    recipientRole: 'customer',
+    title: 'Order Delivered!',
+    message: `Your order #${assignment.orderId} has been successfully delivered.`,
+    type: 'order',
+    referenceId: assignment.orderId,
+  });
+
+  return { success: true, message: 'Order successfully verified and marked Delivered!' };
+}
+
+// =========================================================================
+// SEED INITIAL MARKETPLACE IF EMPTY
+// =========================================================================
+export async function seedMarketplaceIfEmpty() {
+  // Ensure default categories (Food, Vegetables, etc.) are seeded in Firestore and Supabase
+  for (const cat of DEFAULT_CATEGORIES) {
+    try {
+      const docRef = doc(db, 'categories', cat.id);
+      const snap = await getDoc(docRef);
+      if (!snap.exists()) {
+        await setDoc(docRef, cat);
+      }
+    } catch {}
+    try {
+      await supabase.from('categories').upsert({
+        id: cat.id,
+        name: cat.name,
+        icon: cat.icon,
+        description: cat.description,
+        display_order: cat.order,
+      });
+    } catch {}
+  }
+}
+
+// =========================================================================
+// CLEAR ALL PREVIEW DEMO SHOPS AND DUMMY PRODUCTS
+// =========================================================================
+export async function clearMarketplaceDemoData(): Promise<void> {
+  const demoShopIds = ['shop_freshmart', 'shop_apex', 'shop_metro', 'shop_nexus_retail'];
+  const demoProductIds = ['prod_fresh_apples', 'prod_apex_headphones'];
+
+  // 1. Delete from Supabase products
+  try {
+    await supabase.from('products').delete().in('shop_id', demoShopIds);
+    await supabase.from('products').delete().in('id', demoProductIds);
+  } catch (err) {
+    console.warn('Supabase product cleanup notice:', err);
+  }
+
+  // 2. Delete from Supabase shops
+  try {
+    await supabase.from('shops').delete().in('id', demoShopIds);
+  } catch (err) {
+    console.warn('Supabase shop cleanup notice:', err);
+  }
+
+  // 3. Delete from Firestore products
+  for (const pid of demoProductIds) {
+    try {
+      await deleteDoc(doc(db, 'products', pid));
+    } catch {}
+  }
+
+  // Also query Firestore for any products linked to demo shop IDs
+  for (const sid of demoShopIds) {
+    try {
+      const q = query(collection(db, 'products'), where('shopId', '==', sid));
+      const snap = await getDocs(q);
+      snap.forEach(async (d) => {
+        try {
+          await deleteDoc(doc(db, 'products', d.id));
+        } catch {}
+      });
+    } catch {}
+
+    // Delete shop doc
+    try {
+      await deleteDoc(doc(db, 'shops', sid));
+    } catch {}
+  }
+}
+
+// =========================================================================
+// HYPER-LOCAL VILLAGE DELIVERY RATES
+// =========================================================================
+
+// Default pre-seeded fallback rates for sample Meghalaya PIN codes like 794114 & 794001
+export const DEFAULT_VILLAGE_RATES: VillageDeliveryRate[] = [
+  // 794114 (Resubelpara / North Garo Hills)
+  { id: 'vdr_794114_1', pinCode: '794114', villageName: 'Resubelpara Town Center', deliveryCharge: 10 },
+  { id: 'vdr_794114_2', pinCode: '794114', villageName: 'Babukona Village', deliveryCharge: 15 },
+  { id: 'vdr_794114_3', pinCode: '794114', villageName: 'Dekachang', deliveryCharge: 20 },
+  { id: 'vdr_794114_4', pinCode: '794114', villageName: 'Daram Village', deliveryCharge: 25 },
+  { id: 'vdr_794114_5', pinCode: '794114', villageName: 'Kaldang Village', deliveryCharge: 30 },
+  { id: 'vdr_794114_6', pinCode: '794114', villageName: 'Mendipathar Bazaar', deliveryCharge: 35 },
+  { id: 'vdr_794114_7', pinCode: '794114', villageName: 'Songma Village', deliveryCharge: 40 },
+  { id: 'vdr_794114_8', pinCode: '794114', villageName: 'Damas Village', deliveryCharge: 45 },
+  { id: 'vdr_794114_9', pinCode: '794114', villageName: 'Nokmakundi Village', deliveryCharge: 50 },
+  { id: 'vdr_794114_10', pinCode: '794114', villageName: 'Khaldang Outer Hills', deliveryCharge: 60 },
+
+  // 794001 (Tura / West Garo Hills)
+  { id: 'vdr_794001_1', pinCode: '794001', villageName: 'Tura Bazaar Center', deliveryCharge: 10 },
+  { id: 'vdr_794001_2', pinCode: '794001', villageName: 'Hawakhana', deliveryCharge: 15 },
+  { id: 'vdr_794001_3', pinCode: '794001', villageName: 'Chandmari', deliveryCharge: 20 },
+  { id: 'vdr_794001_4', pinCode: '794001', villageName: 'Rongkhon Village', deliveryCharge: 25 },
+  { id: 'vdr_794001_5', pinCode: '794001', villageName: 'Danakgre', deliveryCharge: 30 },
+  { id: 'vdr_794001_6', pinCode: '794001', villageName: 'Araimile', deliveryCharge: 35 },
+  { id: 'vdr_794001_7', pinCode: '794001', villageName: 'Dobasipara', deliveryCharge: 40 },
+  { id: 'vdr_794001_8', pinCode: '794001', villageName: 'Chasingre', deliveryCharge: 45 },
+  { id: 'vdr_794001_9', pinCode: '794001', villageName: 'Asanang Village', deliveryCharge: 50 },
+  { id: 'vdr_794001_10', pinCode: '794001', villageName: 'Rongram Sub-division', deliveryCharge: 55 },
+];
+
+export function mapVillageRateFromDb(row: any): VillageDeliveryRate {
+  return {
+    id: row.id,
+    pinCode: String(row.pin_code || '').trim(),
+    villageName: row.village_name || '',
+    deliveryCharge: Number(row.delivery_charge) || 0,
+    createdAt: row.created_at || undefined,
+    updatedAt: row.updated_at || undefined,
+  };
+}
+
+export function mapVillageRateToDb(v: VillageDeliveryRate): any {
+  return {
+    id: v.id,
+    pin_code: String(v.pinCode || '').trim(),
+    village_name: v.villageName.trim(),
+    delivery_charge: Number(v.deliveryCharge) || 0,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export async function fetchVillageDeliveryRates(pinCode?: string): Promise<VillageDeliveryRate[]> {
+  const cleanPin = pinCode ? pinCode.trim() : '';
+
+  // 1. Try Supabase public.village_delivery_rates table
+  try {
+    let q = supabase.from('village_delivery_rates').select('*').order('delivery_charge', { ascending: true });
+    if (cleanPin) {
+      q = q.eq('pin_code', cleanPin);
+    }
+    const { data, error } = await q;
+    if (!error && data && data.length > 0) {
+      return data.map(mapVillageRateFromDb);
+    }
+  } catch (err) {
+    // Supabase table not created yet or offline
+  }
+
+  // 2. Try Firestore fallback
+  try {
+    let qRef = collection(db, 'village_delivery_rates');
+    let snap;
+    if (cleanPin) {
+      const q = query(qRef, where('pinCode', '==', cleanPin));
+      snap = await getDocs(q);
+    } else {
+      snap = await getDocs(qRef);
+    }
+    if (!snap.empty) {
+      const list: VillageDeliveryRate[] = [];
+      snap.forEach((d) => list.push(d.data() as VillageDeliveryRate));
+      list.sort((a, b) => a.deliveryCharge - b.deliveryCharge);
+      return list;
+    }
+  } catch {}
+
+  // 3. Fallback to default in-memory pre-seeded rates
+  if (cleanPin) {
+    const matched = DEFAULT_VILLAGE_RATES.filter((v) => v.pinCode === cleanPin);
+    if (matched.length > 0) {
+      return matched;
+    }
+    // Return sample 10 scaled villages if none mapped yet for this PIN
+    return [
+      { id: `vdr_${cleanPin}_1`, pinCode: cleanPin, villageName: 'Town / Central Area', deliveryCharge: 10 },
+      { id: `vdr_${cleanPin}_2`, pinCode: cleanPin, villageName: 'Near Bazaar Ward', deliveryCharge: 15 },
+      { id: `vdr_${cleanPin}_3`, pinCode: cleanPin, villageName: 'East Village Colony', deliveryCharge: 20 },
+      { id: `vdr_${cleanPin}_4`, pinCode: cleanPin, villageName: 'West Hills Sector', deliveryCharge: 25 },
+      { id: `vdr_${cleanPin}_5`, pinCode: cleanPin, villageName: 'North River Side', deliveryCharge: 30 },
+      { id: `vdr_${cleanPin}_6`, pinCode: cleanPin, villageName: 'South Outskirts Block', deliveryCharge: 35 },
+      { id: `vdr_${cleanPin}_7`, pinCode: cleanPin, villageName: 'Forest Boundary Village', deliveryCharge: 40 },
+      { id: `vdr_${cleanPin}_8`, pinCode: cleanPin, villageName: 'Upper Valley Extension', deliveryCharge: 45 },
+      { id: `vdr_${cleanPin}_9`, pinCode: cleanPin, villageName: 'Outer Ridge Hamlet', deliveryCharge: 50 },
+      { id: `vdr_${cleanPin}_10`, pinCode: cleanPin, villageName: 'Far Remote Village Border', deliveryCharge: 60 },
+    ];
+  }
+
+  return DEFAULT_VILLAGE_RATES;
+}
+
+export async function saveVillageDeliveryRate(rate: VillageDeliveryRate): Promise<void> {
+  const cleanPin = String(rate.pinCode || '').trim();
+  const cleanRate: VillageDeliveryRate = {
+    ...rate,
+    pinCode: cleanPin,
+    villageName: rate.villageName.trim(),
+    deliveryCharge: Number(rate.deliveryCharge) || 0,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // 1. Save to Supabase public.village_delivery_rates table
+  try {
+    await supabase.from('village_delivery_rates').upsert(mapVillageRateToDb(cleanRate));
+  } catch (err) {
+    console.warn('Supabase village rate upsert notice:', err);
+  }
+
+  // 2. Mirror to Firestore for real-time syncing
+  try {
+    await setDoc(doc(db, 'village_delivery_rates', cleanRate.id), cleanRate);
+  } catch (err) {
+    console.warn('Firestore village rate upsert notice:', err);
+  }
+}
+
+export async function deleteVillageDeliveryRate(rateId: string): Promise<void> {
+  try {
+    await supabase.from('village_delivery_rates').delete().eq('id', rateId);
+  } catch {}
+  try {
+    await deleteDoc(doc(db, 'village_delivery_rates', rateId));
+  } catch {}
+}
+
+export function listenToVillageRates(callback: (rates: VillageDeliveryRate[]) => void) {
+  fetchVillageDeliveryRates().then(callback);
+
+  const channel = createRealtimeChannel('realtime:village_delivery_rates')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'village_delivery_rates' }, () => {
+      fetchVillageDeliveryRates().then(callback);
+    })
+    .subscribe();
+
+  const colRef = collection(db, 'village_delivery_rates');
+  const unsubFs = onSnapshot(
+    colRef,
+    (snap) => {
+      if (!snap.empty) {
+        const list: VillageDeliveryRate[] = [];
+        snap.forEach((d) => list.push(d.data() as VillageDeliveryRate));
+        list.sort((a, b) => a.deliveryCharge - b.deliveryCharge);
+        callback(list);
+      }
+    },
+    () => {}
+  );
+
+  return () => {
+    supabase.removeChannel(channel);
+    unsubFs();
+  };
+}
+

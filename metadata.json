@@ -1,0 +1,6 @@
+{
+  "name": "Balpakram online store",
+  "description": "Balpakram online store - Multi-vendor marketplace with Customer, Seller, Delivery Partner, and Super Admin hubs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
