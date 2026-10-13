@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { X, Mail, Lock, User, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { UserRole } from '../../types';
+import { supabase } from '../../supabase';
+import { BecomeSellerButton } from '../common/BecomeSellerButton';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -45,14 +47,69 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     try {
       let resolvedRole: UserRole = 'customer';
+      const cleanEmail = email.toLowerCase().trim();
+
       if (isRegister) {
         if (!displayName.trim()) {
           throw new Error('Please enter your full name');
         }
-        resolvedRole = await signUpEmail(email, password, displayName, defaultRole || 'customer');
+        resolvedRole = await signUpEmail(cleanEmail, password, displayName, defaultRole || 'customer');
       } else {
-        resolvedRole = await signInEmail(email, password);
+        // Step 1: Execute supabase.auth.signInWithPassword
+        const { data: suAuthData, error: suAuthError } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+
+        let roleFromSupabase: UserRole | null = null;
+
+        if (!suAuthError && suAuthData?.user) {
+          // Step 2: Immediately fetch the logged-in user's role from the Supabase users table
+          const { data: userRecord, error: userError } = await supabase
+            .from('users')
+            .select('role')
+            .or(`id.eq.${suAuthData.user.id},uid.eq.${suAuthData.user.id},email.ilike.${cleanEmail}`)
+            .limit(1)
+            .maybeSingle();
+
+          if (!userError && userRecord?.role) {
+            roleFromSupabase = userRecord.role as UserRole;
+          }
+
+          // Also sync user profile into AuthContext
+          await signInEmail(cleanEmail, password).catch(() => {});
+        } else {
+          // If Supabase auth throws or user was registered in Firebase Auth, fallback cleanly
+          try {
+            roleFromSupabase = await signInEmail(cleanEmail, password);
+          } catch (fbErr: any) {
+            throw suAuthError || fbErr;
+          }
+        }
+
+        // Enforce role assignment:
+        // If role is 'seller', resolve as 'seller'
+        // If role is 'customer' or anything else, resolve as 'customer' (or 'delivery_partner' if matched)
+        if (roleFromSupabase === 'seller') {
+          resolvedRole = 'seller';
+        } else if (roleFromSupabase === 'delivery_partner') {
+          resolvedRole = 'delivery_partner';
+        } else {
+          resolvedRole = 'customer';
+        }
       }
+
+      // Role-Based Redirection:
+      // If role is 'seller', redirect them to /seller-dashboard
+      // If role is 'customer' or anything else, redirect them to the marketplace/buyer store page (/marketplace or /)
+      if (resolvedRole === 'seller') {
+        window.history.pushState({}, '', '/seller-dashboard');
+      } else if (resolvedRole === 'delivery_partner') {
+        window.history.pushState({}, '', '/delivery-dashboard');
+      } else {
+        window.history.pushState({}, '', '/');
+      }
+
       if (onLoginRedirect) {
         onLoginRedirect(resolvedRole);
       }
@@ -62,7 +119,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       let msg = err.message || 'Authentication failed. Please check credentials.';
       if (err.code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
         msg = 'Authentication operation failed. Please try again.';
-      } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+      } else if (
+        err.code === 'auth/invalid-credential' ||
+        err.code === 'auth/wrong-password' ||
+        msg.includes('Invalid login credentials')
+      ) {
         msg = 'Invalid email or password.';
       }
       setErrorMsg(msg);
@@ -75,8 +136,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMsg(null);
     setLoading(true);
     try {
-      // Auto-detect role from Supabase users table without forcing 'customer'
       const resolvedRole = await signInGoogle(isRegister && defaultRole ? defaultRole : undefined);
+      if (resolvedRole === 'seller') {
+        window.history.pushState({}, '', '/seller-dashboard');
+      } else if (resolvedRole === 'delivery_partner') {
+        window.history.pushState({}, '', '/delivery-dashboard');
+      } else {
+        window.history.pushState({}, '', '/');
+      }
       if (onLoginRedirect) {
         onLoginRedirect(resolvedRole);
       }
@@ -245,6 +312,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </svg>
             <span>Google Account</span>
           </button>
+
+          {/* Become a Seller WhatsApp callout for buyers */}
+          <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col items-center gap-1.5 text-center">
+            <span className="text-[11px] text-slate-500">Want to sell your products on Balpakram?</span>
+            <BecomeSellerButton
+              variant="outline"
+              label="Apply as Seller on WhatsApp"
+              className="w-full text-xs py-2 justify-center"
+            />
+          </div>
         </div>
       </div>
     </div>

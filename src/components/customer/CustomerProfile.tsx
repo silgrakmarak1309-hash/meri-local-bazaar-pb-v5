@@ -20,6 +20,7 @@ import { db } from '../../firebase';
 import { collection, query, where, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { supabase } from '../../supabase';
 import { fetchVillageDeliveryRates } from '../../services/dbService';
+import { BecomeSellerButton } from '../common/BecomeSellerButton';
 
 interface CustomerProfileProps {
   onOpenSellerRegistration?: () => void;
@@ -644,11 +645,14 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
               Open Seller Dashboard
             </button>
           ) : (
-            <div className="mt-3 px-3 py-2 bg-emerald-100/80 border border-emerald-300 text-emerald-950 rounded-lg text-[11px] flex items-center justify-between font-medium">
-              <span>Managed in Partner Hub</span>
-              <span className="text-[10px] bg-emerald-700 text-white font-bold px-1.5 py-0.5 rounded uppercase">
-                Admin Only
-              </span>
+            <div className="mt-3 space-y-2">
+              <BecomeSellerButton
+                className="w-full justify-center"
+                label="Become a Seller (WhatsApp 916009092096)"
+              />
+              <p className="text-[10px] text-emerald-800 text-center">
+                Instant WhatsApp message to Admin for store approval
+              </p>
             </div>
           )}
         </div>

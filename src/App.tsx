@@ -82,14 +82,17 @@ function MarketplaceMain() {
         setIsPartnerHubMode(true);
       } else if (p.startsWith('/seller-dashboard') || p.startsWith('#seller-dashboard')) {
         setIsPartnerHubMode(false);
-        switchRole('seller');
         setActiveTab('dashboard');
       } else if (p.startsWith('/delivery-dashboard') || p.startsWith('#delivery-dashboard')) {
         setIsPartnerHubMode(false);
-        switchRole('delivery_partner');
         setActiveTab('home');
-      } else if (p === '/' || p === '') {
+      } else if (p.startsWith('/login') || p.startsWith('#login')) {
         setIsPartnerHubMode(false);
+        setIsAuthModalOpen(true);
+      } else if (p.startsWith('/marketplace') || p === '/' || p === '') {
+        setIsPartnerHubMode(false);
+        switchRole('customer');
+        setActiveTab('home');
       }
     };
     window.addEventListener('popstate', updateLocation);
@@ -104,15 +107,18 @@ function MarketplaceMain() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const p = window.location.pathname + window.location.hash;
-      if (p.startsWith('/seller-dashboard') || p.startsWith('#seller-dashboard')) {
-        switchRole('seller');
+      if (p.startsWith('/login') || p.startsWith('#login')) {
+        setIsAuthModalOpen(true);
+      } else if (p.startsWith('/seller-dashboard') || p.startsWith('#seller-dashboard')) {
         setActiveTab('dashboard');
       } else if (p.startsWith('/delivery-dashboard') || p.startsWith('#delivery-dashboard')) {
-        switchRole('delivery_partner');
+        setActiveTab('home');
+      } else if (p.startsWith('/marketplace')) {
+        switchRole('customer');
         setActiveTab('home');
       }
     }
-  }, []);
+  }, [switchRole]);
 
   const isPartnerHubRoute =
     isPartnerHubMode ||
@@ -596,11 +602,13 @@ function MarketplaceMain() {
         )}
 
         {/* ================= 2. SELLER ROLE ================= */}
-        {role === 'seller' && (
+        {(role === 'seller' || currentPath.startsWith('/seller-dashboard') || currentPath.startsWith('#seller-dashboard')) && (
           <SellerDashboard
             settings={settings}
             activeSubTab={activeTab}
             onSelectSubTab={setActiveTab}
+            onRedirectToLogin={() => handleOpenAuth('signin')}
+            onRedirectToMarketplace={() => handleRoleLoginRedirect('customer')}
           />
         )}
 

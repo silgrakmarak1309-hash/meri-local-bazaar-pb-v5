@@ -21,6 +21,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { useLocation } from '../../context/LocationContext';
 import { UserRole } from '../../types';
+import { BecomeSellerButton } from './BecomeSellerButton';
 
 interface NavbarProps {
   onOpenAuth: (mode?: 'signin' | 'register') => void;
@@ -214,6 +215,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <Store className="w-4 h-4 text-emerald-600 shrink-0" />
                         <span>Go to Seller Dashboard</span>
                       </button>
+                    )}
+
+                    {/* Customer Become a Seller WhatsApp Action */}
+                    {user.role !== 'seller' && role !== 'seller' && !hasRegisteredShop && (
+                      <div className="p-2 border-t border-slate-100 bg-emerald-50/50">
+                        <BecomeSellerButton
+                          variant="compact"
+                          className="w-full justify-center"
+                          label="Become a Seller (WhatsApp)"
+                        />
+                      </div>
                     )}
 
                     {/* Direct Go to Delivery Dashboard link if database role is delivery partner or user has delivery profile */}

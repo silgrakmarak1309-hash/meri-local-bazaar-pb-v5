@@ -927,18 +927,7 @@ export async function getShopByOwnerId(ownerId: string, email?: string): Promise
     }
   } catch {}
 
-  // 3. Fallback to Marak shop (shop_1791092440747) as the active vendor shop
-  try {
-    const { data: defaultShop } = await supabase
-      .from('shops')
-      .select('*')
-      .eq('id', 'shop_1791092440747')
-      .maybeSingle();
-    if (defaultShop) {
-      return mapShopFromDb(defaultShop);
-    }
-  } catch {}
-
+  // Note: Do NOT return arbitrary default shop for unrelated users. A user only owns a shop if explicitly matched.
   return null;
 }
 
@@ -1488,18 +1477,22 @@ export async function fetchUserRoleFromSupabase(uid: string, email?: string): Pr
 
   if (isSuperAdmin) {
     authoritativeRole = 'admin';
-  } else if (dbRole === 'seller' || hasShop) {
+  } else if (dbRole === 'seller') {
     authoritativeRole = 'seller';
-  } else if (dbRole === 'delivery_partner' || hasDeliveryPartner) {
+  } else if (dbRole === 'delivery_partner') {
     authoritativeRole = 'delivery_partner';
   } else if (dbRole === 'customer') {
     authoritativeRole = 'customer';
+  } else if (hasShop) {
+    authoritativeRole = 'seller';
+  } else if (hasDeliveryPartner) {
+    authoritativeRole = 'delivery_partner';
   } else {
     authoritativeRole = 'customer';
   }
 
-  // 4. Auto-sync resolved role to Supabase public.users table if desynced
-  if (uid && (dbRole !== authoritativeRole || !dbRole)) {
+  // 4. Update Supabase public.users table if no role exists yet
+  if (uid && !dbRole) {
     supabase
       .from('users')
       .upsert({

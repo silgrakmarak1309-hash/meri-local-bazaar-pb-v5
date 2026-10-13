@@ -72,20 +72,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setHasRegisteredDelivery(hasDeliveryPartner);
       setRegisteredDeliveryPartner(deliveryPartner);
 
-      // 2. Authoritative role resolution:
-      // - If requestedRole is explicitly seller or delivery_partner, honor it
-      // - If user owns a registered shop: strictly 'seller'
-      // - If user has registered delivery profile: strictly 'delivery_partner'
-      // - If Supabase users table has a role ('seller' / 'delivery_partner' / 'admin'), strictly use that!
-      let effectiveRole: UserRole = supabaseRole;
-      if (requestedRole === 'seller' || (requestedRole === undefined && hasShop && !hasDeliveryPartner)) {
+      // 2. Authoritative role resolution from Supabase users table:
+      let effectiveRole: UserRole = 'customer';
+      if (supabaseRole === 'admin') {
+        effectiveRole = 'admin';
+      } else if (supabaseRole === 'seller') {
         effectiveRole = 'seller';
-      } else if (requestedRole === 'delivery_partner' || (requestedRole === undefined && hasDeliveryPartner && !hasShop)) {
+      } else if (supabaseRole === 'delivery_partner') {
         effectiveRole = 'delivery_partner';
-      } else if (supabaseRole && supabaseRole !== 'customer') {
-        effectiveRole = supabaseRole;
-      } else if (snap.exists() && snap.data().role && snap.data().role !== 'admin') {
-        effectiveRole = snap.data().role as UserRole;
+      } else if (supabaseRole === 'customer') {
+        effectiveRole = 'customer';
+      } else if (hasShop) {
+        effectiveRole = 'seller';
+      } else if (hasDeliveryPartner) {
+        effectiveRole = 'delivery_partner';
       } else if (requestedRole && requestedRole !== 'admin') {
         effectiveRole = requestedRole;
       }
@@ -231,30 +231,65 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setLoading(true);
     const cleanEmail = email.toLowerCase().trim();
     try {
-      const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-      const userRole = await syncUserProfile(cred.user);
-      return userRole;
-    } catch (err: any) {
-      console.warn('Sign in with Firebase Auth returned an error, checking fallback:', err);
-      // If auth provider is disabled (auth/operation-not-allowed) or iframe blocked
-      if (
-        err.code === 'auth/operation-not-allowed' ||
-        err.code === 'auth/configuration-not-found' ||
-        (err.message && err.message.includes('operation-not-allowed'))
-      ) {
-        const uid = getDeterministicUid(cleanEmail);
+      // 1. Supabase Auth attempt
+      let supabaseUser: any = null;
+      try {
+        const { data: suData } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: pass,
+        });
+        if (suData?.user) {
+          supabaseUser = suData.user;
+        }
+      } catch (suErr) {
+        console.warn('Supabase signInWithPassword note:', suErr);
+      }
+
+      // 2. Firebase Auth attempt
+      let firebaseCred: any = null;
+      let firebaseErr: any = null;
+      try {
+        firebaseCred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+      } catch (fbErr: any) {
+        firebaseErr = fbErr;
+        console.warn('Sign in with Firebase Auth returned an error, checking fallback:', fbErr);
+      }
+
+      // If both auth attempts failed and error is real invalid password
+      if (!supabaseUser && !firebaseCred && firebaseErr) {
+        const isOpNotAllowed =
+          firebaseErr.code === 'auth/operation-not-allowed' ||
+          firebaseErr.code === 'auth/configuration-not-found' ||
+          (firebaseErr.message && firebaseErr.message.includes('operation-not-allowed'));
+        if (!isOpNotAllowed) {
+          throw firebaseErr;
+        }
+      }
+
+      const uid = supabaseUser?.id || firebaseCred?.user?.uid || getDeterministicUid(cleanEmail);
+
+      // Fetch authoritative role directly from Supabase users table
+      const { role: supabaseRole, hasShop, hasDeliveryPartner } = await fetchUserRoleFromSupabase(uid, cleanEmail);
+      let effectiveRole: UserRole = 'customer';
+      if (supabaseRole === 'admin') {
+        effectiveRole = 'admin';
+      } else if (supabaseRole === 'seller') {
+        effectiveRole = 'seller';
+      } else if (supabaseRole === 'delivery_partner') {
+        effectiveRole = 'delivery_partner';
+      } else if (supabaseRole === 'customer') {
+        effectiveRole = 'customer';
+      } else if (hasShop) {
+        effectiveRole = 'seller';
+      } else if (hasDeliveryPartner) {
+        effectiveRole = 'delivery_partner';
+      }
+
+      if (firebaseCred?.user) {
+        await syncUserProfile(firebaseCred.user, effectiveRole);
+      } else {
         const userRef = doc(db, 'users', uid);
         const snap = await getDoc(userRef);
-
-        // Fetch authoritative role from Supabase users table
-        const { role: supabaseRole, hasShop, hasDeliveryPartner } = await fetchUserRoleFromSupabase(uid, cleanEmail);
-        let effectiveRole: UserRole = supabaseRole;
-        if (hasShop && !hasDeliveryPartner) {
-          effectiveRole = 'seller';
-        } else if (hasDeliveryPartner && !hasShop) {
-          effectiveRole = 'delivery_partner';
-        }
-
         if (snap.exists()) {
           const profile = snap.data() as UserProfile;
           profile.role = effectiveRole;
@@ -262,7 +297,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setRole(effectiveRole);
           localStorage.setItem('bazaarx_auth_user', JSON.stringify(profile));
         } else {
-          // Seamless sign in: create account profile in Firestore
           const newProfile: UserProfile = {
             uid,
             email: cleanEmail,
@@ -272,14 +306,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
-          await setDoc(userRef, newProfile, { merge: true });
+          await setDoc(userRef, newProfile, { merge: true }).catch(() => {});
           setUser(newProfile);
           setRole(effectiveRole);
           localStorage.setItem('bazaarx_auth_user', JSON.stringify(newProfile));
         }
-        return effectiveRole;
       }
-      throw err;
+
+      return effectiveRole;
     } finally {
       setLoading(false);
     }

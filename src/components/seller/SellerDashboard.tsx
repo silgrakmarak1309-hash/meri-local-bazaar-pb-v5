@@ -36,12 +36,9 @@ import {
   listenToWalletTransactions,
   listenToUserPayouts,
 } from '../../services/dbService';
-import {
-  setupSellerOrderRealtime,
-  getNotificationPermission,
-  requestNotificationPermission,
-  playTestSound,
-} from '../../services/notificationService';
+import { setupSellerOrderRealtime, getNotificationPermission, requestNotificationPermission, playTestSound } from '../../services/notificationService';
+import { supabase } from '../../supabase';
+import { BecomeSellerButton } from '../common/BecomeSellerButton';
 import { SellerProducts } from './SellerProducts';
 import { SellerOrders } from './SellerOrders';
 import { SellerWallet } from './SellerWallet';
@@ -53,6 +50,8 @@ interface SellerDashboardProps {
   settings: PlatformSettings;
   activeSubTab?: string;
   onSelectSubTab?: (tab: string) => void;
+  onRedirectToLogin?: () => void;
+  onRedirectToMarketplace?: () => void;
 }
 
 export const SellerDashboard: React.FC<SellerDashboardProps> = ({
@@ -60,6 +59,8 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   settings,
   activeSubTab = 'dashboard',
   onSelectSubTab,
+  onRedirectToLogin,
+  onRedirectToMarketplace,
 }) => {
   const { user } = useAuth();
   const [shop, setShop] = useState<Shop | null>(null);
@@ -71,9 +72,102 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   const [loading, setLoading] = useState(true);
   const [isPostAdOpen, setIsPostAdOpen] = useState(false);
 
+  // Route protection state
+  const [isCheckingAccess, setIsCheckingAccess] = useState(true);
+  const [isAccessDenied, setIsAccessDenied] = useState(false);
+  const [accessDeniedMessage, setAccessDeniedMessage] = useState('');
+
   // Tab state
   const currentTab = activeSubTab;
   const setTab = onSelectSubTab || (() => {});
+
+  // Robust Route Protection Check:
+  // 1. Check logged-in user's role from Supabase
+  // 2. If logged out, send to /login
+  // 3. If role is NOT 'seller', immediately block access, show alert message, and redirect back to marketplace page
+  useEffect(() => {
+    let isMounted = true;
+
+    async function checkSellerAccess() {
+      setIsCheckingAccess(true);
+
+      // Check current session from Supabase
+      const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      const suUser = sessionData?.session?.user;
+      const currentEmail = (suUser?.email || user?.email || '').toLowerCase().trim();
+      const currentUid = suUser?.id || user?.uid;
+
+      // 1. If user is logged out, send them to /login
+      if (!suUser && !user) {
+        if (!isMounted) return;
+        setIsCheckingAccess(false);
+        setIsAccessDenied(true);
+        setAccessDeniedMessage('You are logged out. Please sign in to access the Seller Dashboard.');
+        window.history.pushState({}, '', '/login');
+        if (onRedirectToLogin) {
+          onRedirectToLogin();
+        } else {
+          window.location.hash = '#login';
+        }
+        return;
+      }
+
+      // 2. Check logged-in user's role from Supabase 'users' table
+      let fetchedRole: string = 'customer';
+      try {
+        let query = supabase.from('users').select('role');
+        if (currentUid && currentEmail) {
+          query = query.or(`id.eq.${currentUid},uid.eq.${currentUid},email.ilike.${currentEmail}`);
+        } else if (currentUid) {
+          query = query.or(`id.eq.${currentUid},uid.eq.${currentUid}`);
+        } else if (currentEmail) {
+          query = query.eq('email', currentEmail);
+        }
+
+        const { data: userRow, error } = await query.limit(1).maybeSingle();
+        if (!error && userRow?.role) {
+          fetchedRole = userRow.role;
+        } else if (user?.role) {
+          fetchedRole = user.role;
+        }
+      } catch (err) {
+        console.error('Error verifying seller permissions:', err);
+        if (user?.role) fetchedRole = user.role;
+      }
+
+      if (!isMounted) return;
+
+      // 3. If role is NOT 'seller' (e.g., they are a 'customer'), immediately block access,
+      // show an alert message, and redirect them back to the marketplace page.
+      if (fetchedRole !== 'seller') {
+        setIsCheckingAccess(false);
+        setIsAccessDenied(true);
+        const deniedMsg =
+          'Access Denied: You do not have seller privileges. Only registered sellers can access the Seller Dashboard.';
+        setAccessDeniedMessage(deniedMsg);
+
+        // Show alert message
+        alert(deniedMsg);
+
+        // Redirect back to marketplace page (/marketplace or /)
+        window.history.pushState({}, '', '/');
+        if (onRedirectToMarketplace) {
+          onRedirectToMarketplace();
+        }
+        return;
+      }
+
+      // Verified as seller
+      setIsAccessDenied(false);
+      setIsCheckingAccess(false);
+    }
+
+    checkSellerAccess();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user, onRedirectToLogin, onRedirectToMarketplace]);
 
   useEffect(() => {
     if (!user) return;
@@ -160,11 +254,72 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
     setNotifPermission(res);
   };
 
-  if (!user) {
+  // 1. Loading check for route permissions
+  if (isCheckingAccess) {
     return (
-      <div className="max-w-md mx-auto p-6 bg-white rounded-xl shadow-2xs border border-slate-200 mt-8 text-center">
-        <Store className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-        <h2 className="text-base font-bold text-slate-800">Sign in to Access Seller Hub</h2>
+      <div className="min-h-[50vh] flex flex-col items-center justify-center p-6 text-center space-y-3">
+        <div className="w-10 h-10 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
+        <h3 className="text-sm font-bold text-slate-800">Verifying Seller Permissions</h3>
+        <p className="text-xs text-slate-500">Checking credentials with Supabase users registry...</p>
+      </div>
+    );
+  }
+
+  // 2. Blocked access screen when user is unauthorized or logged out
+  if (isAccessDenied) {
+    return (
+      <div className="max-w-xl mx-auto my-8 p-6 sm:p-8 bg-white rounded-2xl shadow-lg border border-red-200 text-center space-y-5 animate-in fade-in zoom-in-95 duration-200">
+        <div className="w-16 h-16 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto shadow-inner">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <div className="space-y-1.5">
+          <span className="inline-block px-3 py-1 bg-red-100 text-red-800 text-[10px] font-extrabold rounded-full uppercase tracking-wider">
+            Access Blocked
+          </span>
+          <h2 className="text-xl sm:text-2xl font-black text-slate-900">Seller Dashboard Restricted</h2>
+          <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
+            {accessDeniedMessage ||
+              'Only verified sellers with approved accounts can access the Seller Dashboard. Regular customer accounts are redirected to the marketplace.'}
+          </p>
+        </div>
+
+        {/* WhatsApp seller approval callout */}
+        <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 text-left space-y-3">
+          <div className="flex items-start gap-2.5">
+            <span className="text-xl">🏪</span>
+            <div>
+              <p className="text-xs font-bold text-emerald-950">Want to sell your products on Balpakram?</p>
+              <p className="text-[11px] text-emerald-800 mt-0.5">
+                Contact Admin directly on WhatsApp to register and approve your store.
+              </p>
+            </div>
+          </div>
+          <BecomeSellerButton
+            className="w-full justify-center"
+            label="Chat with Admin on WhatsApp (916009092096)"
+          />
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-2.5 justify-center pt-2">
+          <button
+            onClick={() => {
+              window.history.pushState({}, '', '/');
+              if (onRedirectToMarketplace) onRedirectToMarketplace();
+            }}
+            className="w-full sm:w-auto px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+          >
+            Return to Buyer Marketplace
+          </button>
+          <button
+            onClick={() => {
+              window.history.pushState({}, '', '/login');
+              if (onRedirectToLogin) onRedirectToLogin();
+            }}
+            className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
+          >
+            Sign In with Another Account
+          </button>
+        </div>
       </div>
     );
   }
@@ -180,7 +335,7 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
   // If no shop registered yet
   if (!shop) {
     return (
-      <div className="max-w-2xl mx-auto p-6 sm:p-8 bg-white rounded-2xl shadow-sm border border-slate-200 mt-6 text-center space-y-4">
+      <div className="max-w-2xl mx-auto p-6 sm:p-8 bg-white rounded-2xl shadow-sm border border-slate-200 mt-6 text-center space-y-5">
         <div className="w-16 h-16 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center mx-auto text-2xl font-bold">
           🏬
         </div>
@@ -191,8 +346,14 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
           <h2 className="text-xl font-black text-slate-900">No Retail Shop Linked</h2>
         </div>
         <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-          Shop accounts and vendor onboarding are strictly verified and registered by administrators within the protected Partner Hub. Please contact your platform administrator to provision your store.
+          Shop accounts and vendor onboarding are strictly verified and registered by administrators within the protected Partner Hub. Please contact your platform administrator on WhatsApp to provision your store.
         </p>
+        <div className="pt-2 max-w-sm mx-auto">
+          <BecomeSellerButton
+            className="w-full justify-center"
+            label="Request Shop Linking on WhatsApp (916009092096)"
+          />
+        </div>
       </div>
     );
   }
