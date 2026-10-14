@@ -19,7 +19,7 @@ import { Address, VillageDeliveryRate } from '../../types';
 import { db } from '../../firebase';
 import { collection, query, where, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { supabase } from '../../supabase';
-import { fetchVillageDeliveryRates } from '../../services/dbService';
+import { fetchVillageDeliveryRates, safeFirestoreGetDocs } from '../../services/dbService';
 import { BecomeSellerButton } from '../common/BecomeSellerButton';
 
 interface CustomerProfileProps {
@@ -165,9 +165,9 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
       // 2. Firestore fallback
       try {
         const q = query(collection(db, 'addresses'), where('userId', '==', user.uid));
-        const snap = await getDocs(q);
+        const snap = await safeFirestoreGetDocs(q);
         const list: Address[] = [];
-        snap.forEach((d) => {
+        snap.forEach((d: any) => {
           const addr = d.data() as Address;
           if (isDemoMockAddress(addr)) {
             deleteDoc(doc(db, 'addresses', addr.id || d.id)).catch(() => {});

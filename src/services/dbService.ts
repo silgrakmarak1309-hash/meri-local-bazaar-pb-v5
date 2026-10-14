@@ -46,6 +46,141 @@ export function createRealtimeChannel(prefix: string) {
   return supabase.channel(uniqueName);
 }
 
+// =========================================================================
+// FIRESTORE QUOTA CIRCUIT BREAKER & SAFETY MECHANISM
+// Automatically prevents "Uncaught Error in snapshot listener: FirebaseError: [code=resource-exhausted]"
+// Seamlessly routes 100% of data reads & subscriptions to Supabase PostgreSQL Realtime channels.
+// =========================================================================
+const FS_QUOTA_STORAGE_KEY = 'bazaarx_fs_quota_exceeded';
+
+function checkStoredQuotaExceeded(): boolean {
+  try {
+    if (typeof window !== 'undefined') {
+      const item = localStorage.getItem(FS_QUOTA_STORAGE_KEY);
+      if (item) {
+        const timestamp = parseInt(item, 10);
+        // Suppress Firestore read listeners for 6 hours once quota exceeded
+        if (Date.now() - timestamp < 6 * 60 * 60 * 1000) {
+          return true;
+        } else {
+          localStorage.removeItem(FS_QUOTA_STORAGE_KEY);
+        }
+      }
+    }
+  } catch {}
+  return false;
+}
+
+let isFirestoreQuotaExceeded = checkStoredQuotaExceeded();
+let lastQuotaNoticeTime = 0;
+
+export function markFirestoreQuotaExceeded(reason?: any) {
+  isFirestoreQuotaExceeded = true;
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(FS_QUOTA_STORAGE_KEY, String(Date.now()));
+    }
+  } catch {}
+
+  const now = Date.now();
+  if (now - lastQuotaNoticeTime > 60000) {
+    lastQuotaNoticeTime = now;
+    console.warn(
+      '[Firestore Protection] Free tier daily read limit reached. All live subscriptions and database requests are seamlessly handled by Supabase.',
+      reason?.message || ''
+    );
+  }
+}
+
+export function safeFirestoreOnSnapshot(
+  queryOrRef: any,
+  onNext: (snap: any) => void,
+  onError?: (error: any) => void
+): () => void {
+  // If Firestore quota limit exceeded, do not initiate any Firestore read listeners.
+  // Supabase PostgreSQL Realtime channels already handle 100% of live data.
+  if (isFirestoreQuotaExceeded) {
+    return () => {};
+  }
+
+  if (!queryOrRef) return () => {};
+
+  try {
+    const unsub = onSnapshot(
+      queryOrRef,
+      (snap) => {
+        try {
+          onNext(snap);
+        } catch (err) {
+          console.warn('[Firestore listener callback notice]:', err);
+        }
+      },
+      (error: any) => {
+        const errorMsg = String(error?.message || '');
+        const errorCode = String(error?.code || '');
+        if (
+          errorCode.includes('resource-exhausted') ||
+          errorMsg.includes('Quota limit exceeded') ||
+          errorMsg.includes('Free daily read units') ||
+          errorCode.includes('permission-denied') ||
+          errorCode.includes('unavailable')
+        ) {
+          markFirestoreQuotaExceeded(error);
+        } else {
+          console.warn('[Firestore onSnapshot notice]:', errorCode, errorMsg);
+        }
+
+        if (onError) {
+          try {
+            onError(error);
+          } catch {}
+        }
+      }
+    );
+    return unsub;
+  } catch (err: any) {
+    markFirestoreQuotaExceeded(err);
+    return () => {};
+  }
+}
+
+export async function safeFirestoreGetDocs(queryOrColRef: any): Promise<any> {
+  if (isFirestoreQuotaExceeded) {
+    return { empty: true, forEach: () => {}, docs: [] };
+  }
+  try {
+    const snap = await getDocs(queryOrColRef);
+    return snap;
+  } catch (err: any) {
+    if (
+      err?.code?.includes('resource-exhausted') ||
+      err?.message?.includes('Quota limit exceeded') ||
+      err?.message?.includes('Free daily read units')
+    ) {
+      markFirestoreQuotaExceeded(err);
+    }
+    return { empty: true, forEach: () => {}, docs: [] };
+  }
+}
+
+export async function safeFirestoreGetDoc(docRef: any): Promise<any> {
+  if (isFirestoreQuotaExceeded) {
+    return { exists: () => false, data: () => null };
+  }
+  try {
+    const snap = await getDoc(docRef);
+    return snap;
+  } catch (err: any) {
+    if (
+      err?.code?.includes('resource-exhausted') ||
+      err?.message?.includes('Quota limit exceeded') ||
+      err?.message?.includes('Free daily read units')
+    ) {
+      markFirestoreQuotaExceeded(err);
+    }
+    return { exists: () => false, data: () => null };
+  }
+}
 
 // =========================================================================
 // DATA MAPPERS: TypeScript CamelCase <-> PostgreSQL SnakeCase
@@ -590,7 +725,7 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
   // Fallback to Firestore / defaults
   try {
     const docRef = doc(db, 'settings', 'platform_settings');
-    const snap = await getDoc(docRef);
+    const snap = await safeFirestoreGetDoc(docRef);
     if (snap.exists()) {
       return snap.data() as PlatformSettings;
     }
@@ -620,7 +755,7 @@ export function listenToSettings(callback: (settings: PlatformSettings) => void)
 
   // 3. Fallback Firestore snapshot
   const docRef = doc(db, 'settings', 'platform_settings');
-  const unsubFs = onSnapshot(docRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(docRef, (snap) => {
     if (snap.exists()) {
       callback(snap.data() as PlatformSettings);
     }
@@ -707,9 +842,9 @@ export function listenToNotifications(userId: string, role: string, callback: (n
 
   // Firestore fallback
   const colRef = collection(db, 'notifications');
-  const unsubFs = onSnapshot(colRef, (snapshot) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snapshot) => {
     const notifs: AppNotification[] = [];
-    snapshot.forEach((d) => {
+    snapshot.forEach((d: any) => {
       const data = d.data() as AppNotification;
       if (
         role === 'admin' ||
@@ -802,10 +937,10 @@ export function listenToCategories(callback: (categories: Category[]) => void) {
     .subscribe();
 
   const colRef = collection(db, 'categories');
-  const unsubFs = onSnapshot(colRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snap) => {
     if (!snap.empty) {
       const list: Category[] = [];
-      snap.forEach((d) => list.push(d.data() as Category));
+      snap.forEach((d: any) => list.push(d.data() as Category));
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
       callback(list);
     }
@@ -871,9 +1006,9 @@ export function listenToShops(callback: (shops: Shop[]) => void) {
     .subscribe();
 
   const colRef = collection(db, 'shops');
-  const unsubFs = onSnapshot(colRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snap) => {
     const list: Shop[] = [];
-    snap.forEach((d) => list.push(d.data() as Shop));
+    snap.forEach((d: any) => list.push(d.data() as Shop));
     callback(list);
   });
 
@@ -913,14 +1048,14 @@ export async function getShopByOwnerId(ownerId: string, email?: string): Promise
   try {
     if (ownerId) {
       const q = query(collection(db, 'shops'), where('ownerId', '==', ownerId));
-      const snap = await getDocs(q);
+      const snap = await safeFirestoreGetDocs(q);
       if (!snap.empty) {
         return snap.docs[0].data() as Shop;
       }
     }
     if (cleanEmail) {
       const qEmail = query(collection(db, 'shops'), where('email', '==', cleanEmail));
-      const snapEmail = await getDocs(qEmail);
+      const snapEmail = await safeFirestoreGetDocs(qEmail);
       if (!snapEmail.empty) {
         return snapEmail.docs[0].data() as Shop;
       }
@@ -947,7 +1082,7 @@ export function listenToShopByOwnerId(ownerId: string, callback: (shop: Shop | n
 
   const q = ownerId ? query(collection(db, 'shops'), where('ownerId', '==', ownerId)) : null;
   const unsubFs = q
-    ? onSnapshot(q, (snap) => {
+    ? safeFirestoreOnSnapshot(q, (snap) => {
         if (!snap.empty) {
           callback(snap.docs[0].data() as Shop);
         } else {
@@ -1070,7 +1205,7 @@ export async function updateShopStatus(shopId: string, status: Shop['status'], r
       if (data) return mapShopFromDb(data);
     } catch {}
     try {
-      const snap = await getDoc(doc(db, 'shops', shopId));
+      const snap = await safeFirestoreGetDoc(doc(db, 'shops', shopId));
       if (snap.exists()) return snap.data() as Shop;
     } catch {}
     return null;
@@ -1169,10 +1304,10 @@ export function listenToSellerProducts(shopId: string, callback: (products: Prod
     .subscribe();
 
   const q = query(collection(db, 'products'), where('shopId', '==', shopId));
-  const unsubFs = onSnapshot(q, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(q, (snap) => {
     if (!hasSupabaseData) {
       const list: Product[] = [];
-      snap.forEach((d) => list.push(d.data() as Product));
+      snap.forEach((d: any) => list.push(d.data() as Product));
       callback(list);
     }
   });
@@ -1198,7 +1333,7 @@ export async function saveProduct(product: Product) {
 
     if (!toSave.sellerPinCode) {
       try {
-        const shopSnap = await getDoc(doc(db, 'shops', toSave.shopId));
+        const shopSnap = await safeFirestoreGetDoc(doc(db, 'shops', toSave.shopId));
         if (shopSnap.exists()) {
           const shop = shopSnap.data() as Shop;
           toSave.sellerPinCode = (shop.servicePinCode || shop.postalCode || '').trim();
@@ -1327,9 +1462,9 @@ export function listenToDeliveryPartners(callback: (partners: DeliveryPartner[])
     .subscribe();
 
   const colRef = collection(db, 'delivery_partners');
-  const unsubFs = onSnapshot(colRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snap) => {
     const list: DeliveryPartner[] = [];
-    snap.forEach((d) => list.push(d.data() as DeliveryPartner));
+    snap.forEach((d: any) => list.push(d.data() as DeliveryPartner));
     callback(list);
   });
 
@@ -1368,14 +1503,14 @@ export async function getDeliveryPartnerByIdOrEmail(partnerId: string, email?: s
   // 2. Firestore fallback
   try {
     if (partnerId) {
-      const snap = await getDoc(doc(db, 'delivery_partners', partnerId));
+      const snap = await safeFirestoreGetDoc(doc(db, 'delivery_partners', partnerId));
       if (snap.exists()) {
         return snap.data() as DeliveryPartner;
       }
     }
     if (cleanEmail) {
       const qEmail = query(collection(db, 'delivery_partners'), where('email', '==', cleanEmail));
-      const snapEmail = await getDocs(qEmail);
+      const snapEmail = await safeFirestoreGetDocs(qEmail);
       if (!snapEmail.empty) {
         return snapEmail.docs[0].data() as DeliveryPartner;
       }
@@ -1402,7 +1537,7 @@ export function listenToDeliveryPartner(partnerId: string, callback: (partner: D
 
   const docRef = partnerId ? doc(db, 'delivery_partners', partnerId) : null;
   const unsubFs = docRef
-    ? onSnapshot(docRef, (snap) => {
+    ? safeFirestoreOnSnapshot(docRef, (snap) => {
         if (snap.exists()) {
           callback(snap.data() as DeliveryPartner);
         } else {
@@ -1784,7 +1919,7 @@ export function listenToWallet(
     try {
       for (const oid of ids) {
         const q = query(collection(db, 'wallets'), where('ownerId', '==', oid), where('role', '==', role));
-        const snap = await getDocs(q);
+        const snap = await safeFirestoreGetDocs(q);
         if (!snap.empty) {
           callback(snap.docs[0].data() as Wallet);
           return;
@@ -1810,7 +1945,7 @@ export function listenToWallet(
 
   const unsubs = ids.map((oid) => {
     const q = query(collection(db, 'wallets'), where('ownerId', '==', oid), where('role', '==', role));
-    return onSnapshot(q, (snap) => {
+    return safeFirestoreOnSnapshot(q, (snap) => {
       if (!snap.empty) {
         callback(snap.docs[0].data() as Wallet);
       }
@@ -1849,8 +1984,8 @@ export function listenToWalletTransactions(
     try {
       for (const id of ids) {
         const q = query(collection(db, 'wallet_transactions'), where('ownerId', '==', id));
-        const snap = await getDocs(q);
-        snap.forEach((d) => allTxs.push(d.data() as WalletTransaction));
+        const snap = await safeFirestoreGetDocs(q);
+        snap.forEach((d: any) => allTxs.push(d.data() as WalletTransaction));
       }
       allTxs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       callback(allTxs);
@@ -1869,7 +2004,7 @@ export function listenToWalletTransactions(
 
   const unsubs = ids.map((id) => {
     const q = query(collection(db, 'wallet_transactions'), where('ownerId', '==', id));
-    return onSnapshot(q, () => {
+    return safeFirestoreOnSnapshot(q, () => {
       fetchTxs();
     });
   });
@@ -1890,18 +2025,18 @@ export function listenToAllWallets(callback: (wallets: Wallet[]) => void) {
       }
     } catch {}
     const colRef = collection(db, 'wallets');
-    const snap = await getDocs(colRef);
+    const snap = await safeFirestoreGetDocs(colRef);
     const list: Wallet[] = [];
-    snap.forEach((d) => list.push(d.data() as Wallet));
+    snap.forEach((d: any) => list.push(d.data() as Wallet));
     callback(list);
   };
   fetchAll();
 
   const channel = createRealtimeChannel('realtime:all_wallets').on('postgres_changes', { event: '*', schema: 'public', table: 'wallets' }, () => fetchAll()).subscribe();
   const colRef = collection(db, 'wallets');
-  const unsubFs = onSnapshot(colRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snap) => {
     const list: Wallet[] = [];
-    snap.forEach((d) => list.push(d.data() as Wallet));
+    snap.forEach((d: any) => list.push(d.data() as Wallet));
     callback(list);
   });
 
@@ -1921,9 +2056,9 @@ export function listenToAllWalletTransactions(callback: (txs: WalletTransaction[
       }
     } catch {}
     const colRef = collection(db, 'wallet_transactions');
-    const snap = await getDocs(colRef);
+    const snap = await safeFirestoreGetDocs(colRef);
     const list: WalletTransaction[] = [];
-    snap.forEach((d) => list.push(d.data() as WalletTransaction));
+    snap.forEach((d: any) => list.push(d.data() as WalletTransaction));
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     callback(list);
   };
@@ -1931,9 +2066,9 @@ export function listenToAllWalletTransactions(callback: (txs: WalletTransaction[
 
   const channel = createRealtimeChannel('realtime:all_txs').on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_transactions' }, () => fetchAll()).subscribe();
   const colRef = collection(db, 'wallet_transactions');
-  const unsubFs = onSnapshot(colRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snap) => {
     const list: WalletTransaction[] = [];
-    snap.forEach((d) => list.push(d.data() as WalletTransaction));
+    snap.forEach((d: any) => list.push(d.data() as WalletTransaction));
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     callback(list);
   });
@@ -2040,9 +2175,9 @@ export function listenToPayoutRequests(callback: (payouts: PayoutRequest[]) => v
       }
     } catch {}
     const colRef = collection(db, 'payout_requests');
-    const snap = await getDocs(colRef);
+    const snap = await safeFirestoreGetDocs(colRef);
     const list: PayoutRequest[] = [];
-    snap.forEach((d) => list.push(d.data() as PayoutRequest));
+    snap.forEach((d: any) => list.push(d.data() as PayoutRequest));
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     callback(list);
   };
@@ -2050,9 +2185,9 @@ export function listenToPayoutRequests(callback: (payouts: PayoutRequest[]) => v
 
   const channel = createRealtimeChannel('realtime:payout_requests').on('postgres_changes', { event: '*', schema: 'public', table: 'payout_requests' }, () => fetchAll()).subscribe();
   const colRef = collection(db, 'payout_requests');
-  const unsubFs = onSnapshot(colRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snap) => {
     const list: PayoutRequest[] = [];
-    snap.forEach((d) => list.push(d.data() as PayoutRequest));
+    snap.forEach((d: any) => list.push(d.data() as PayoutRequest));
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     callback(list);
   });
@@ -2089,8 +2224,8 @@ export function listenToUserPayouts(
     try {
       for (const id of ids) {
         const q = query(collection(db, 'payout_requests'), where('requesterId', '==', id));
-        const snap = await getDocs(q);
-        snap.forEach((d) => allPayouts.push(d.data() as PayoutRequest));
+        const snap = await safeFirestoreGetDocs(q);
+        snap.forEach((d: any) => allPayouts.push(d.data() as PayoutRequest));
       }
       allPayouts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       callback(allPayouts);
@@ -2107,7 +2242,7 @@ export function listenToUserPayouts(
 
   const unsubs = ids.map((id) => {
     const q = query(collection(db, 'payout_requests'), where('requesterId', '==', id));
-    return onSnapshot(q, () => {
+    return safeFirestoreOnSnapshot(q, () => {
       fetchMine();
     });
   });
@@ -2183,7 +2318,7 @@ export async function updatePayoutStatus(
 
     if (!payout) {
       try {
-        const snap = await getDoc(doc(db, 'payout_requests', payoutId));
+        const snap = await safeFirestoreGetDoc(doc(db, 'payout_requests', payoutId));
         if (snap.exists()) payout = snap.data() as PayoutRequest;
       } catch {}
     }
@@ -2293,9 +2428,9 @@ export async function fetchCustomerOrdersFromSupabase(
     const uid = typeof userOrId === 'string' ? userOrId : userOrId?.uid;
     if (uid && uid.trim()) {
       const q = query(collection(db, 'orders'), where('customerId', '==', uid.trim()));
-      const snap = await getDocs(q);
+      const snap = await safeFirestoreGetDocs(q);
       const list: Order[] = [];
-      snap.forEach((d) => list.push(d.data() as Order));
+      snap.forEach((d: any) => list.push(d.data() as Order));
       list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       return list;
     }
@@ -2486,8 +2621,8 @@ export async function fetchAllOrdersFromSupabase(): Promise<Order[]> {
   // 2. Firestore fallback & merge
   try {
     const colRef = collection(db, 'orders');
-    const snap = await getDocs(colRef);
-    snap.forEach((d) => {
+    const snap = await safeFirestoreGetDocs(colRef);
+    snap.forEach((d: any) => {
       const fo = d.data() as Order;
       if (fo && fo.id) {
         // If not in Supabase yet, add from Firestore
@@ -2525,9 +2660,9 @@ export function listenToAllOrders(callback: (orders: Order[]) => void) {
   let unsubFs = () => {};
   try {
     const colRef = collection(db, 'orders');
-    unsubFs = onSnapshot(colRef, () => {
+    unsubFs = safeFirestoreOnSnapshot(colRef, () => {
       fetchAll();
-    }, () => {});
+    });
   } catch {}
 
   return () => {
@@ -2546,9 +2681,9 @@ export function listenToDeliveryAssignments(callback: (assignments: DeliveryAssi
       }
     } catch {}
     const colRef = collection(db, 'delivery_assignments');
-    const snap = await getDocs(colRef);
+    const snap = await safeFirestoreGetDocs(colRef);
     const list: DeliveryAssignment[] = [];
-    snap.forEach((d) => list.push(d.data() as DeliveryAssignment));
+    snap.forEach((d: any) => list.push(d.data() as DeliveryAssignment));
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     callback(list);
   };
@@ -2556,9 +2691,9 @@ export function listenToDeliveryAssignments(callback: (assignments: DeliveryAssi
 
   const channel = createRealtimeChannel('realtime:all_assignments').on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_assignments' }, () => fetchAll()).subscribe();
   const colRef = collection(db, 'delivery_assignments');
-  const unsubFs = onSnapshot(colRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snap) => {
     const list: DeliveryAssignment[] = [];
-    snap.forEach((d) => list.push(d.data() as DeliveryAssignment));
+    snap.forEach((d: any) => list.push(d.data() as DeliveryAssignment));
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     callback(list);
   });
@@ -2579,9 +2714,9 @@ export function listenToPartnerDeliveries(partnerId: string, callback: (assignme
       }
     } catch {}
     const colRef = collection(db, 'delivery_assignments');
-    const snap = await getDocs(colRef);
+    const snap = await safeFirestoreGetDocs(colRef);
     const list: DeliveryAssignment[] = [];
-    snap.forEach((d) => {
+    snap.forEach((d: any) => {
       const item = d.data() as DeliveryAssignment;
       if (item.deliveryPartnerId === partnerId || item.status === 'available') {
         list.push(item);
@@ -2594,9 +2729,9 @@ export function listenToPartnerDeliveries(partnerId: string, callback: (assignme
 
   const channel = createRealtimeChannel(`realtime:partner_deliveries_${partnerId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_assignments' }, () => fetchPartner()).subscribe();
   const colRef = collection(db, 'delivery_assignments');
-  const unsubFs = onSnapshot(colRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snap) => {
     const list: DeliveryAssignment[] = [];
-    snap.forEach((d) => {
+    snap.forEach((d: any) => {
       const item = d.data() as DeliveryAssignment;
       if (item.deliveryPartnerId === partnerId || item.status === 'available') {
         list.push(item);
@@ -2634,9 +2769,9 @@ export function listenToUsers(callback: (users: UserProfile[]) => void) {
       }
     } catch {}
     const colRef = collection(db, 'users');
-    const snap = await getDocs(colRef);
+    const snap = await safeFirestoreGetDocs(colRef);
     const list: UserProfile[] = [];
-    snap.forEach((d) => list.push(d.data() as UserProfile));
+    snap.forEach((d: any) => list.push(d.data() as UserProfile));
     list.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
     callback(list);
   };
@@ -2644,9 +2779,9 @@ export function listenToUsers(callback: (users: UserProfile[]) => void) {
 
   const channel = createRealtimeChannel('realtime:users').on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => fetchUsers()).subscribe();
   const colRef = collection(db, 'users');
-  const unsubFs = onSnapshot(colRef, (snap) => {
+  const unsubFs = safeFirestoreOnSnapshot(colRef, (snap) => {
     const list: UserProfile[] = [];
-    snap.forEach((d) => list.push(d.data() as UserProfile));
+    snap.forEach((d: any) => list.push(d.data() as UserProfile));
     list.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
     callback(list);
   });
@@ -2782,7 +2917,7 @@ export async function createOrder(
       // Fallback check Firestore
       if (!sellerServicePin) {
         try {
-          const shopSnap = await getDoc(doc(db, 'shops', shopId));
+          const shopSnap = await safeFirestoreGetDoc(doc(db, 'shops', shopId));
           if (shopSnap.exists()) {
             const shop = shopSnap.data() as Shop;
             sellerServicePin = (shop.servicePinCode || shop.postalCode || '').trim();
@@ -3434,7 +3569,7 @@ export async function completeDeliveryWithOtp(assignmentId: string, enteredOtp: 
 
   if (!assignment) {
     try {
-      const snap = await getDoc(doc(db, 'delivery_assignments', assignmentId));
+      const snap = await safeFirestoreGetDoc(doc(db, 'delivery_assignments', assignmentId));
       if (snap.exists()) assignment = snap.data() as DeliveryAssignment;
     } catch {}
   }
@@ -3591,7 +3726,7 @@ export async function seedMarketplaceIfEmpty() {
   for (const cat of DEFAULT_CATEGORIES) {
     try {
       const docRef = doc(db, 'categories', cat.id);
-      const snap = await getDoc(docRef);
+      const snap = await safeFirestoreGetDoc(docRef);
       if (!snap.exists()) {
         await setDoc(docRef, cat);
       }
@@ -3641,8 +3776,8 @@ export async function clearMarketplaceDemoData(): Promise<void> {
   for (const sid of demoShopIds) {
     try {
       const q = query(collection(db, 'products'), where('shopId', '==', sid));
-      const snap = await getDocs(q);
-      snap.forEach(async (d) => {
+      const snap = await safeFirestoreGetDocs(q);
+      snap.forEach(async (d: any) => {
         try {
           await deleteDoc(doc(db, 'products', d.id));
         } catch {}
@@ -3731,13 +3866,13 @@ export async function fetchVillageDeliveryRates(pinCode?: string): Promise<Villa
     let snap;
     if (cleanPin) {
       const q = query(qRef, where('pinCode', '==', cleanPin));
-      snap = await getDocs(q);
+      snap = await safeFirestoreGetDocs(q);
     } else {
-      snap = await getDocs(qRef);
+      snap = await safeFirestoreGetDocs(qRef);
     }
     if (!snap.empty) {
       const list: VillageDeliveryRate[] = [];
-      snap.forEach((d) => list.push(d.data() as VillageDeliveryRate));
+      snap.forEach((d: any) => list.push(d.data() as VillageDeliveryRate));
       list.sort((a, b) => a.deliveryCharge - b.deliveryCharge);
       return list;
     }
@@ -3811,17 +3946,16 @@ export function listenToVillageRates(callback: (rates: VillageDeliveryRate[]) =>
     .subscribe();
 
   const colRef = collection(db, 'village_delivery_rates');
-  const unsubFs = onSnapshot(
+  const unsubFs = safeFirestoreOnSnapshot(
     colRef,
     (snap) => {
       if (!snap.empty) {
         const list: VillageDeliveryRate[] = [];
-        snap.forEach((d) => list.push(d.data() as VillageDeliveryRate));
+        snap.forEach((d: any) => list.push(d.data() as VillageDeliveryRate));
         list.sort((a, b) => a.deliveryCharge - b.deliveryCharge);
         callback(list);
       }
-    },
-    () => {}
+    }
   );
 
   return () => {

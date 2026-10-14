@@ -4,7 +4,7 @@ import { db } from '../firebase';
 import { supabase } from '../supabase';
 import { useAuth } from './AuthContext';
 import { CartItem, Product, PlatformSettings } from '../types';
-import { DEFAULT_SETTINGS } from '../services/dbService';
+import { DEFAULT_SETTINGS, getPlatformSettings, safeFirestoreGetDoc } from '../services/dbService';
 
 interface CartContextType {
   items: CartItem[];
@@ -29,17 +29,11 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Load platform settings for local PIN restriction status
   useEffect(() => {
-    const fetchSettings = async () => {
-      try {
-        const snap = await getDoc(doc(db, 'settings', 'platform_settings'));
-        if (snap.exists()) {
-          setPlatformSettings(snap.data() as PlatformSettings);
-        }
-      } catch (e) {
-        // Use default
-      }
-    };
-    fetchSettings();
+    getPlatformSettings()
+      .then((settings) => {
+        if (settings) setPlatformSettings(settings);
+      })
+      .catch(() => {});
   }, []);
 
   // Load cart from Firestore when user changes, or local storage
@@ -86,12 +80,12 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // 2. Fallback to Firestore
       try {
         const cartRef = doc(db, 'cart', user.uid);
-        const snap = await getDoc(cartRef);
-        if (snap.exists() && snap.data().items) {
+        const snap = await safeFirestoreGetDoc(cartRef);
+        if (snap && snap.exists() && snap.data().items) {
           setItems(snap.data().items as CartItem[]);
         }
       } catch (e) {
-        console.warn('Error loading remote cart:', e);
+        // Ignored
       }
     };
     loadRemoteCart();

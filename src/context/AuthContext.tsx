@@ -13,7 +13,7 @@ import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
 import { UserProfile, UserRole, Shop, DeliveryPartner } from '../types';
 import { supabase } from '../supabase';
-import { checkUserProfiles, ensureWalletExists, fetchUserRoleFromSupabase } from '../services/dbService';
+import { checkUserProfiles, ensureWalletExists, fetchUserRoleFromSupabase, safeFirestoreGetDoc } from '../services/dbService';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -56,7 +56,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const syncUserProfile = async (fbUser: FirebaseUser, requestedRole?: UserRole): Promise<UserRole> => {
     try {
       const userRef = doc(db, 'users', fbUser.uid);
-      const snap = await getDoc(userRef);
+      const snap = await safeFirestoreGetDoc(userRef);
 
       // 1. Fetch user role and profiles from Supabase (authoritative source of truth)
       const {
@@ -117,7 +117,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       }
 
-      if (snap.exists()) {
+      if (snap && snap.exists()) {
         const profile = snap.data() as UserProfile;
         profile.role = effectiveRole;
         await updateDoc(userRef, { role: effectiveRole }).catch(() => {});
@@ -134,7 +134,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-        await setDoc(userRef, newProfile);
+        await setDoc(userRef, newProfile).catch(() => {});
         setUser(newProfile);
         setRole(effectiveRole);
         localStorage.setItem('bazaarx_auth_user', JSON.stringify(newProfile));
@@ -289,8 +289,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await syncUserProfile(firebaseCred.user, effectiveRole);
       } else {
         const userRef = doc(db, 'users', uid);
-        const snap = await getDoc(userRef);
-        if (snap.exists()) {
+        const snap = await safeFirestoreGetDoc(userRef);
+        if (snap && snap.exists()) {
           const profile = snap.data() as UserProfile;
           profile.role = effectiveRole;
           setUser(profile);
@@ -404,13 +404,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const googleEmail = 'customer@balpakram.in';
         const uid = getDeterministicUid(googleEmail);
         const userRef = doc(db, 'users', uid);
-        const snap = await getDoc(userRef);
+        const snap = await safeFirestoreGetDoc(userRef);
 
         const { role: supabaseRole } = await fetchUserRoleFromSupabase(uid, googleEmail);
         const effectiveRole: UserRole = chosenRole || supabaseRole || 'customer';
 
         let profile: UserProfile;
-        if (snap.exists()) {
+        if (snap && snap.exists()) {
           profile = snap.data() as UserProfile;
           profile.role = effectiveRole;
         } else {

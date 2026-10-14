@@ -16,7 +16,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { Address, PlatformSettings, PaymentMethod, Order, VillageDeliveryRate } from '../../types';
-import { createOrder, fetchVillageDeliveryRates } from '../../services/dbService';
+import { createOrder, fetchVillageDeliveryRates, safeFirestoreGetDocs } from '../../services/dbService';
 import { doc, getDocs, collection, query, where, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { supabase } from '../../supabase';
@@ -207,9 +207,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       // 2. Fallback to Firestore
       try {
         const q = query(collection(db, 'addresses'), where('userId', '==', user.uid));
-        const snap = await getDocs(q);
+        const snap = await safeFirestoreGetDocs(q);
         const list: Address[] = [];
-        snap.forEach((d) => {
+        snap.forEach((d: any) => {
           const addr = d.data() as Address;
           if (isDemoMockAddress(addr)) {
             deleteDoc(doc(db, 'addresses', addr.id || d.id)).catch(() => {});

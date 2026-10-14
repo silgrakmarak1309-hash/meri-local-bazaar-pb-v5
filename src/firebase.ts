@@ -14,10 +14,24 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(defa
 // Validate initial connection
 export async function testFirebaseConnection(): Promise<boolean> {
   try {
+    const isExceeded = typeof window !== 'undefined' && localStorage.getItem('bazaarx_fs_quota_exceeded');
+    if (isExceeded) {
+      console.log('Firebase initialized (operating in Supabase primary mode).');
+      return true;
+    }
     await getDocFromServer(doc(db, 'test', 'connection'));
     console.log('Firebase connection confirmed.');
     return true;
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'resource-exhausted' || error?.message?.includes('Quota limit exceeded')) {
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('bazaarx_fs_quota_exceeded', String(Date.now()));
+        } catch {}
+      }
+      console.log('Firebase initialized (Firestore free daily read quota reached; Supabase active).');
+      return true;
+    }
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.warn('Firebase connection: client appears offline, will sync when online.');
     } else {

@@ -4,6 +4,7 @@ import { Product } from '../types';
 import { supabase } from '../supabase';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { safeFirestoreGetDoc } from '../services/dbService';
 
 interface LocationContextType {
   buyerPinCode: string;
@@ -40,14 +41,22 @@ export const LocationProvider: React.FC<{ children: ReactNode }> = ({ children }
     if (!user) return;
     const fetchUserPin = async () => {
       try {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        if (userDoc.exists() && userDoc.data().deliveryPinCode) {
+        if (user.deliveryPinCode) {
+          const userPin = String(user.deliveryPinCode).trim();
+          if (userPin) {
+            setBuyerPinCodeState(userPin);
+            localStorage.setItem(LOCAL_STORAGE_PIN_KEY, userPin);
+            return;
+          }
+        }
+        const userDoc = await safeFirestoreGetDoc(doc(db, 'users', user.uid));
+        if (userDoc && userDoc.exists() && userDoc.data().deliveryPinCode) {
           const userPin = String(userDoc.data().deliveryPinCode).trim();
           setBuyerPinCodeState(userPin);
           localStorage.setItem(LOCAL_STORAGE_PIN_KEY, userPin);
         }
       } catch (err) {
-        console.warn('Could not sync user profile PIN code:', err);
+        // Safe fallback
       }
     };
     fetchUserPin();
