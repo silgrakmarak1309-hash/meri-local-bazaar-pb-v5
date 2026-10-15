@@ -76,49 +76,76 @@ function MarketplaceMain() {
 
   useEffect(() => {
     const updateLocation = () => {
-      const p = window.location.pathname + window.location.hash;
-      setCurrentPath(p);
-      if (p.startsWith('/partner-hub') || p.startsWith('#partner-hub')) {
-        setIsPartnerHubMode(true);
-      } else if (p.startsWith('/seller-dashboard') || p.startsWith('#seller-dashboard')) {
-        setIsPartnerHubMode(false);
-        setActiveTab('dashboard');
-      } else if (p.startsWith('/delivery-dashboard') || p.startsWith('#delivery-dashboard')) {
-        setIsPartnerHubMode(false);
-        setActiveTab('home');
-      } else if (p.startsWith('/login') || p.startsWith('#login')) {
-        setIsPartnerHubMode(false);
-        setIsAuthModalOpen(true);
-      } else if (p.startsWith('/marketplace') || p === '/' || p === '') {
-        setIsPartnerHubMode(false);
-        switchRole('customer');
-        setActiveTab('home');
+      try {
+        if (typeof window === 'undefined') return;
+        const p = window.location.pathname + window.location.hash;
+        setCurrentPath(p);
+        if (p.startsWith('/partner-hub') || p.startsWith('#partner-hub')) {
+          setIsPartnerHubMode(true);
+        } else if (p.startsWith('/seller-dashboard') || p.startsWith('#seller-dashboard')) {
+          setIsPartnerHubMode(false);
+          setActiveTab('dashboard');
+        } else if (p.startsWith('/delivery-dashboard') || p.startsWith('#delivery-dashboard')) {
+          setIsPartnerHubMode(false);
+          setActiveTab('home');
+        } else if (p.startsWith('/login') || p.startsWith('#login')) {
+          setIsPartnerHubMode(false);
+          setIsAuthModalOpen(true);
+        } else if (p.startsWith('/marketplace') || p === '/' || p === '') {
+          setIsPartnerHubMode(false);
+          setActiveTab('home');
+        }
+      } catch (err) {
+        console.warn('[Routing listener notice]:', err);
       }
     };
+
     window.addEventListener('popstate', updateLocation);
     window.addEventListener('hashchange', updateLocation);
+
+    // Secure Background Resume Listener
+    const handleBackgroundResume = () => {
+      try {
+        if (document.visibilityState === 'visible') {
+          updateLocation();
+        }
+      } catch (err) {
+        console.warn('[Background resume route refresh notice]:', err);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleBackgroundResume);
+    window.addEventListener('pageshow', handleBackgroundResume);
+    window.addEventListener('focus', handleBackgroundResume);
+
     return () => {
       window.removeEventListener('popstate', updateLocation);
       window.removeEventListener('hashchange', updateLocation);
+      document.removeEventListener('visibilitychange', handleBackgroundResume);
+      window.removeEventListener('pageshow', handleBackgroundResume);
+      window.removeEventListener('focus', handleBackgroundResume);
     };
-  }, [switchRole]);
+  }, []);
 
   // Initial path routing check on load
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const p = window.location.pathname + window.location.hash;
-      if (p.startsWith('/login') || p.startsWith('#login')) {
-        setIsAuthModalOpen(true);
-      } else if (p.startsWith('/seller-dashboard') || p.startsWith('#seller-dashboard')) {
-        setActiveTab('dashboard');
-      } else if (p.startsWith('/delivery-dashboard') || p.startsWith('#delivery-dashboard')) {
-        setActiveTab('home');
-      } else if (p.startsWith('/marketplace')) {
-        switchRole('customer');
-        setActiveTab('home');
+    try {
+      if (typeof window !== 'undefined') {
+        const p = window.location.pathname + window.location.hash;
+        if (p.startsWith('/login') || p.startsWith('#login')) {
+          setIsAuthModalOpen(true);
+        } else if (p.startsWith('/seller-dashboard') || p.startsWith('#seller-dashboard')) {
+          setActiveTab('dashboard');
+        } else if (p.startsWith('/delivery-dashboard') || p.startsWith('#delivery-dashboard')) {
+          setActiveTab('home');
+        } else if (p.startsWith('/marketplace')) {
+          setActiveTab('home');
+        }
       }
+    } catch (err) {
+      console.warn('[Initial path routing notice]:', err);
     }
-  }, [switchRole]);
+  }, []);
 
   const isPartnerHubRoute =
     isPartnerHubMode ||

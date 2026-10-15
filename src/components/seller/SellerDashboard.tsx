@@ -29,6 +29,7 @@ import {
 import {
   listenToShopByOwnerId,
   listenToSellerProducts,
+  fetchSellerProductsFromSupabase,
   listenToSellerOrders,
   fetchSellerOrdersFromSupabase,
   ensureWalletExists,
@@ -212,33 +213,43 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
     const activeShopId = shop?.id || 'shop_1791092440747';
     const activeShopName = shop?.shopName || 'Marak shop';
     const activeOwnerId = shop?.ownerId || user?.uid || '';
+    const activeEmail = user?.email || shop?.email || '';
 
-    // Immediately fetch orders so count is populated instantly without waiting
-    fetchSellerOrdersFromSupabase({
+    const sellerContext = {
       id: activeShopId,
       shopName: activeShopName,
       ownerId: activeOwnerId,
-    }).then((initialOrders) => {
+      email: activeEmail,
+    };
+
+    // Immediately fetch seller products from Supabase so count is populated instantly without waiting
+    fetchSellerProductsFromSupabase(sellerContext).then((initialProds) => {
+      if (initialProds && initialProds.length > 0) {
+        setProducts(initialProds);
+      }
+    });
+
+    // Immediately fetch orders so count is populated instantly without waiting
+    fetchSellerOrdersFromSupabase(sellerContext).then((initialOrders) => {
       if (initialOrders && initialOrders.length > 0) {
         setOrders(initialOrders);
       }
     });
 
-    const unsubProd = listenToSellerProducts(activeShopId, (p) => setProducts(p));
+    const unsubProd = listenToSellerProducts(sellerContext, (p) => setProducts(p));
     // Listen to orders matching active shop ID (shop_1791092440747) or shop name (Marak shop)
     const unsubOrd = listenToSellerOrders(
-      { id: activeShopId, shopName: activeShopName, ownerId: activeOwnerId },
+      sellerContext,
       (o) => setOrders(o)
     );
 
     // Supabase Realtime channel for order arrival: plays loud cash-register chime + native device push
     const unsubRealtimePush = setupSellerOrderRealtime(activeShopId, user?.uid || '', () => {
-      fetchSellerOrdersFromSupabase({
-        id: activeShopId,
-        shopName: activeShopName,
-        ownerId: activeOwnerId,
-      }).then((fresh) => {
+      fetchSellerOrdersFromSupabase(sellerContext).then((fresh) => {
         if (fresh) setOrders(fresh);
+      });
+      fetchSellerProductsFromSupabase(sellerContext).then((freshProds) => {
+        if (freshProds && freshProds.length > 0) setProducts(freshProds);
       });
     });
 
@@ -247,7 +258,7 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({
       unsubOrd();
       unsubRealtimePush();
     };
-  }, [shop?.id, shop?.shopName, shop?.ownerId, user?.uid]);
+  }, [shop?.id, shop?.shopName, shop?.ownerId, shop?.email, user?.uid, user?.email]);
 
   const handleEnablePush = async () => {
     const res = await requestNotificationPermission();

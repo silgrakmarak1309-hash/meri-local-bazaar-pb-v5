@@ -188,43 +188,161 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      setFirebaseUser(fbUser);
-      if (fbUser) {
-        await syncUserProfile(fbUser);
-      } else {
-        // Check if user session stored in localStorage
+    // 1. Recover cached session from localStorage immediately on mount
+    try {
+      const saved = localStorage.getItem('bazaarx_auth_user') || localStorage.getItem('bazaarx_demo_user');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.uid) {
+          setUser(parsed);
+          setRole(parsed.role || 'customer');
+        }
+      }
+    } catch (err) {
+      console.warn('[Cached auth restore notice]:', err);
+    }
+
+    // 2. Firebase onAuthStateChanged listener
+    let unsubscribeFb = () => {};
+    try {
+      unsubscribeFb = onAuthStateChanged(auth, async (fbUser) => {
+        try {
+          setFirebaseUser(fbUser);
+          if (fbUser) {
+            await syncUserProfile(fbUser);
+          } else {
+            // Check if user session stored in localStorage or Supabase
+            try {
+              const saved = localStorage.getItem('bazaarx_auth_user') || localStorage.getItem('bazaarx_demo_user');
+              if (saved) {
+                const parsed = JSON.parse(saved);
+                setUser(parsed);
+                setRole(parsed.role || 'customer');
+                // Verify with Supabase in background
+                fetchUserRoleFromSupabase(parsed.uid, parsed.email)
+                  .then(({ role: suRole, hasShop, shop, hasDeliveryPartner, deliveryPartner }) => {
+                    if (hasShop) {
+                      setHasRegisteredShop(true);
+                      setRegisteredShop(shop);
+                    }
+                    if (hasDeliveryPartner) {
+                      setHasRegisteredDelivery(true);
+                      setRegisteredDeliveryPartner(deliveryPartner);
+                    }
+                    if (suRole && suRole !== parsed.role) {
+                      const refreshed = { ...parsed, role: suRole };
+                      setUser(refreshed);
+                      setRole(suRole);
+                      try {
+                        localStorage.setItem('bazaarx_auth_user', JSON.stringify(refreshed));
+                      } catch {}
+                    }
+                  })
+                  .catch(() => {});
+              }
+            } catch (e) {
+              console.warn('[Local storage auth restore notice]:', e);
+            }
+          }
+        } catch (innerErr) {
+          console.warn('[Firebase auth state change notice]:', innerErr);
+        } finally {
+          setLoading(false);
+        }
+      });
+    } catch (fbInitErr) {
+      console.warn('[Firebase auth init notice]:', fbInitErr);
+      setLoading(false);
+    }
+
+    // 3. Supabase Auth state change listener
+    let authListener: any = null;
+    try {
+      const sub = supabase.auth.onAuthStateChange(async (event, session) => {
+        try {
+          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            if (session?.user) {
+              const sUser = session.user;
+              const { role: suRole, hasShop, shop, hasDeliveryPartner, deliveryPartner } =
+                await fetchUserRoleFromSupabase(sUser.id, sUser.email).catch(() => ({ role: null, hasShop: false, shop: null, hasDeliveryPartner: false, deliveryPartner: null }));
+              if (hasShop) {
+                setHasRegisteredShop(true);
+                setRegisteredShop(shop);
+              }
+              if (hasDeliveryPartner) {
+                setHasRegisteredDelivery(true);
+                setRegisteredDeliveryPartner(deliveryPartner);
+              }
+              if (suRole) {
+                setRole(suRole as UserRole);
+                setUser((prev) => (prev ? { ...prev, role: suRole as UserRole } : prev));
+              }
+            }
+          }
+        } catch (suAuthErr) {
+          console.warn('[Supabase auth listener notice]:', suAuthErr);
+        }
+      });
+      authListener = sub?.data?.subscription;
+    } catch (suInitErr) {
+      console.warn('[Supabase auth sub notice]:', suInitErr);
+    }
+
+    // 4. Background App Resume (Recent Menu) Listener
+    const handleAppResume = async () => {
+      try {
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
+        // Restore saved profile safely
         const saved = localStorage.getItem('bazaarx_auth_user') || localStorage.getItem('bazaarx_demo_user');
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
-            setUser(parsed);
-            setRole(parsed.role);
-            // Verify with Supabase and Firestore in background
-            try {
-              const { role: suRole } = await fetchUserRoleFromSupabase(parsed.uid, parsed.email);
-              if (suRole && suRole !== parsed.role) {
-                const refreshed = { ...parsed, role: suRole };
-                setUser(refreshed);
-                setRole(suRole);
-                localStorage.setItem('bazaarx_auth_user', JSON.stringify(refreshed));
-              }
-            } catch (_) {
-              // Ignore background fetch error
+            if (parsed?.uid) {
+              setUser((current) => current || parsed);
+              setRole((currRole) => currRole || parsed.role || 'customer');
             }
-          } catch (e) {
-            setUser(null);
-            setRole('customer');
-          }
-        } else {
-          setUser(null);
-          setRole('customer');
+          } catch {}
         }
-      }
-      setLoading(false);
-    });
 
-    return () => unsubscribe();
+        // Refresh Supabase session non-blockingly
+        supabase.auth.getSession().then(({ data: sData, error: sErr }) => {
+          if (!sErr && sData?.session?.user) {
+            const u = sData.session.user;
+            fetchUserRoleFromSupabase(u.id, u.email).then(({ role: suRole, hasShop, shop, hasDeliveryPartner, deliveryPartner }) => {
+              if (hasShop) {
+                setHasRegisteredShop(true);
+                setRegisteredShop(shop);
+              }
+              if (hasDeliveryPartner) {
+                setHasRegisteredDelivery(true);
+                setRegisteredDeliveryPartner(deliveryPartner);
+              }
+              if (suRole) {
+                setRole(suRole);
+                setUser((prev) => (prev ? { ...prev, role: suRole } : prev));
+              }
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+      } catch (resumeErr) {
+        console.warn('[Auth background resume notice]:', resumeErr);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleAppResume);
+    window.addEventListener('pageshow', handleAppResume);
+    window.addEventListener('focus', handleAppResume);
+
+    return () => {
+      unsubscribeFb();
+      if (authListener?.unsubscribe) {
+        authListener.unsubscribe();
+      }
+      document.removeEventListener('visibilitychange', handleAppResume);
+      window.removeEventListener('pageshow', handleAppResume);
+      window.removeEventListener('focus', handleAppResume);
+    };
   }, []);
 
   const signInEmail = async (email: string, pass: string): Promise<UserRole> => {

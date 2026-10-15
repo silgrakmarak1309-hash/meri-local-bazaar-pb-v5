@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Wallet, WalletTransaction, PayoutRequest, Shop, PlatformSettings } from '../../types';
 import { requestPayout } from '../../services/dbService';
+import { useAuth } from '../../context/AuthContext';
 
 interface SellerWalletProps {
   wallet: Wallet | null;
@@ -28,6 +29,7 @@ export const SellerWallet: React.FC<SellerWalletProps> = ({
   shop,
   settings,
 }) => {
+  const { user } = useAuth();
   const [payoutAmount, setPayoutAmount] = useState<number>(settings.minPayoutAmount);
   const [upiId, setUpiId] = useState<string>(shop?.bankDetails?.upiId || '');
   const [isRequesting, setIsRequesting] = useState(false);
@@ -71,10 +73,10 @@ export const SellerWallet: React.FC<SellerWalletProps> = ({
     setIsRequesting(true);
     try {
       // Use the authenticated owner_id (e.g., UUID format like jg2BitKsPT4xGg35E9cC8YG2)
-      const targetOwnerId = wallet?.ownerId || shop?.ownerId || '';
+      const targetOwnerId = wallet?.ownerId || shop?.ownerId || user?.uid || '';
       await requestPayout({
         requesterId: targetOwnerId,
-        requesterName: shop?.ownerName || shop?.shopName || 'Shop Owner',
+        requesterName: shop?.ownerName || shop?.shopName || user?.displayName || 'Shop Owner',
         requesterRole: 'seller',
         shopId: shop?.id || '',
         amount: payoutAmount,

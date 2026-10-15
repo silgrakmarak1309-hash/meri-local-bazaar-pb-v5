@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -370,7 +371,42 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+
+    // Fallback handler for all non-API GET requests to reliably serve index.html
+    app.get('*', async (req, res, next) => {
+      if (req.originalUrl.startsWith('/api/')) {
+        return next();
+      }
+      try {
+        const indexPath = path.resolve(__dirname, 'index.html');
+        if (fs.existsSync(indexPath)) {
+          let template = fs.readFileSync(indexPath, 'utf-8');
+          template = await vite.transformIndexHtml(req.originalUrl, template);
+          res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+          return;
+        }
+      } catch (err) {
+        console.warn('[Vite Transform Notice on Resume]:', err);
+      }
+      // Safe fallback
+      res.status(200).sendFile(path.resolve(__dirname, 'index.html'));
+    });
   }
+
+  // Global Error Handler to guarantee no 500 Server Error crashes the application on resume
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.warn('[Server Handled Error Notice]:', err?.message || err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    if (req.originalUrl && req.originalUrl.startsWith('/api/')) {
+      return res.status(200).json({
+        success: false,
+        error: err?.message || 'Handled request error',
+      });
+    }
+    res.status(200).sendFile(path.resolve(__dirname, 'index.html'));
+  });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server started on http://0.0.0.0:${PORT}`);
