@@ -262,6 +262,24 @@ export function mapProductFromDb(row: any): Product {
     ? specs._delivery_pricing.villageDeliveryRates
     : [];
 
+  // Filter specs so specifications only contains primitive string values and strips objects/arrays
+  const cleanSpecs: Record<string, string> = {};
+  if (specs && typeof specs === 'object' && !Array.isArray(specs)) {
+    for (const [k, v] of Object.entries(specs)) {
+      if (
+        k === 'villageDeliveryRates' ||
+        k === 'village_delivery_rates' ||
+        k === 'targetPinCode' ||
+        k.startsWith('_')
+      ) {
+        continue;
+      }
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+        cleanSpecs[k] = String(v);
+      }
+    }
+  }
+
   return {
     id: row.id,
     shopId: row.shop_id || '',
@@ -274,7 +292,7 @@ export function mapProductFromDb(row: any): Product {
     stock: Number(row.stock) || 0,
     sku: row.sku || undefined,
     images: Array.isArray(row.images) ? row.images : [],
-    specifications: specs,
+    specifications: cleanSpecs,
     isActive: row.is_active !== false,
     isApproved: row.is_approved !== false,
     deliveryAvailable: row.delivery_available !== false,

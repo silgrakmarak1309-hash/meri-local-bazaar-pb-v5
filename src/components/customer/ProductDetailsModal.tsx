@@ -167,27 +167,73 @@ export const ProductDetailsModal: React.FC<ProductDetailsModalProps> = ({
                 </p>
               </div>
 
-              {/* Specifications */}
-              {product.specifications && Object.keys(product.specifications).length > 0 && (
+              {/* Village Delivery Rates by Location */}
+              {product.villageDeliveryRates && Array.isArray(product.villageDeliveryRates) && product.villageDeliveryRates.length > 0 && (
                 <div className="mt-4">
-                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">
-                    Specifications
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span>📍 Village Delivery Fees</span>
+                    </span>
+                    {product.targetPinCode && (
+                      <span className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded font-bold">
+                        PIN {product.targetPinCode}
+                      </span>
+                    )}
                   </h4>
-                  <div className="border border-slate-200 rounded-lg overflow-hidden text-xs">
-                    {Object.entries(product.specifications).map(([key, val], idx) => (
-                      <div
-                        key={key}
-                        className={`flex py-1.5 px-3 ${
-                          idx % 2 === 0 ? 'bg-slate-50' : 'bg-white'
-                        }`}
-                      >
-                        <span className="w-1/3 text-slate-500 font-medium">{key}</span>
-                        <span className="w-2/3 text-slate-800 font-semibold">{val}</span>
-                      </div>
-                    ))}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {product.villageDeliveryRates.map((r: any, i: number) => {
+                      if (!r || typeof r !== 'object') return null;
+                      const vName = r.villageName || r.village_name || 'Village';
+                      const vCharge = r.deliveryCharge ?? r.delivery_charge ?? 0;
+                      return (
+                        <div key={r.id || `${vName}_${i}`} className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs">
+                          <div className="font-bold text-slate-800 truncate" title={vName}>
+                            {vName}
+                          </div>
+                          <div className="text-emerald-700 font-bold mt-0.5">
+                            ₹{vCharge} fee
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
+
+              {/* Specifications */}
+              {(() => {
+                const validSpecs = product.specifications && typeof product.specifications === 'object'
+                  ? Object.entries(product.specifications).filter(([key, val]) => {
+                      if (val === null || val === undefined) return false;
+                      if (typeof val === 'object') return false; // Guard: Never render object as React child
+                      if (key === 'villageDeliveryRates' || key === 'village_delivery_rates' || key.startsWith('_')) return false;
+                      return true;
+                    })
+                  : [];
+
+                if (validSpecs.length === 0) return null;
+
+                return (
+                  <div className="mt-4">
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">
+                      Specifications
+                    </h4>
+                    <div className="border border-slate-200 rounded-lg overflow-hidden text-xs">
+                      {validSpecs.map(([key, val], idx) => (
+                        <div
+                          key={key}
+                          className={`flex py-1.5 px-3 ${
+                            idx % 2 === 0 ? 'bg-slate-50' : 'bg-white'
+                          }`}
+                        >
+                          <span className="w-1/3 text-slate-500 font-medium">{key}</span>
+                          <span className="w-2/3 text-slate-800 font-semibold">{String(val)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
