@@ -140,7 +140,7 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
   const [sellerCommission, setSellerCommission] = useState(settings.sellerCommissionPercent);
   const [platformFee, setPlatformFee] = useState(settings.platformFee);
   const [deliveryCharge, setDeliveryCharge] = useState(settings.deliveryBaseCharge);
-  const [partnerEarning, setPartnerEarning] = useState(settings.deliveryPartnerEarningPerOrder);
+  const [partnerCommissionPercent, setPartnerCommissionPercent] = useState(settings.deliveryPartnerCommissionPercent ?? settings.deliveryPartnerEarningPerOrder ?? 5);
   const [minPayout, setMinPayout] = useState(settings.minPayoutAmount);
   const [codEnabled, setCodEnabled] = useState(settings.cashOnDeliveryEnabled);
   const [autoApprove, setAutoApprove] = useState(settings.autoApproveProducts);
@@ -205,7 +205,7 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
     setSellerCommission(settings.sellerCommissionPercent);
     setPlatformFee(settings.platformFee);
     setDeliveryCharge(settings.deliveryBaseCharge);
-    setPartnerEarning(settings.deliveryPartnerEarningPerOrder);
+    setPartnerCommissionPercent(settings.deliveryPartnerCommissionPercent ?? settings.deliveryPartnerEarningPerOrder ?? 5);
     setMinPayout(settings.minPayoutAmount);
     setCodEnabled(settings.cashOnDeliveryEnabled);
     setAutoApprove(settings.autoApproveProducts);
@@ -391,7 +391,8 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
       sellerCommissionPercent: Number(sellerCommission),
       platformFee: Number(platformFee),
       deliveryBaseCharge: Number(deliveryCharge),
-      deliveryPartnerEarningPerOrder: Number(partnerEarning),
+      deliveryPartnerCommissionPercent: Number(partnerCommissionPercent),
+      deliveryPartnerEarningPerOrder: Number(partnerCommissionPercent),
       minPayoutAmount: Number(minPayout),
       cashOnDeliveryEnabled: codEnabled,
       autoApproveProducts: autoApprove,
@@ -951,7 +952,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="font-bold text-emerald-700">₹{a.earningAmount} earning</div>
+                      <div className="font-bold text-emerald-700">₹{a.earningAmount || Math.round((a.deliveryFee || 20) * 0.95)} earning</div>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold uppercase">
                         {a.status.replace(/_/g, ' ')}
                       </span>
@@ -1757,7 +1758,7 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
                     <span className="text-slate-400 ml-2">Pickup: {a.shopName}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-emerald-700 font-bold">Rider Earning: ₹{a.earningAmount}</span>
+                    <span className="text-emerald-700 font-bold">Rider Earning: ₹{a.earningAmount || Math.round((a.deliveryFee || 20) * 0.95)} (95%)</span>
                     <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold uppercase text-[10px]">
                       {a.status.replace(/_/g, ' ')}
                     </span>
@@ -2286,18 +2287,21 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
               </div>
 
               <div>
-                <label className="font-bold text-slate-800 block mb-1">Delivery Partner Earning (₹/Order)</label>
+                <label className="font-bold text-slate-800 block mb-1">Delivery Partner Commission Deducted by Platform (%)</label>
                 <div className="relative">
                   <input
                     type="number"
-                    value={partnerEarning}
-                    onChange={(e) => setPartnerEarning(Number(e.target.value))}
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={partnerCommissionPercent}
+                    onChange={(e) => setPartnerCommissionPercent(Number(e.target.value))}
                     className="w-full px-3.5 py-2.5 bg-white text-slate-900 font-black text-sm border border-slate-300 rounded-xl shadow-2xs focus:bg-white focus:text-slate-900 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 focus:outline-none active:text-slate-900 disabled:text-slate-900 disabled:bg-slate-100 placeholder:text-slate-400 transition"
                     style={{ color: '#0f172a', backgroundColor: '#ffffff', colorScheme: 'light' }}
                   />
-                  <span className="absolute right-3.5 top-2.5 text-slate-500 font-bold pointer-events-none text-xs">₹</span>
+                  <span className="absolute right-3.5 top-2.5 text-slate-500 font-bold pointer-events-none text-xs">%</span>
                 </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Credited to rider wallet upon OTP delivery</span>
+                <span className="text-[10px] text-slate-500 mt-1 block">Platform fee % deducted from customer delivery charge (Rider earns remaining {100 - Number(partnerCommissionPercent || 5)}% in wallet)</span>
               </div>
 
               <div>

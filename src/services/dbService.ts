@@ -662,12 +662,14 @@ export function mapNotifToDb(n: Partial<AppNotification>): any {
 }
 
 export function mapSettingsFromDb(row: any): PlatformSettings {
+  const commPercent = Number(row.delivery_partner_commission_percent ?? row.delivery_partner_earning_per_order) || 5;
   return {
     id: row.id || 'platform_settings',
     sellerCommissionPercent: Number(row.seller_commission_percent) || 5,
     platformFee: Number(row.platform_fee) || 5,
     deliveryBaseCharge: Number(row.delivery_base_charge) || 40,
-    deliveryPartnerEarningPerOrder: Number(row.delivery_partner_earning_per_order) || 35,
+    deliveryPartnerCommissionPercent: commPercent,
+    deliveryPartnerEarningPerOrder: commPercent,
     minPayoutAmount: Number(row.min_payout_amount) || 100,
     autoApproveProducts: row.auto_approve_products !== false,
     cashOnDeliveryEnabled: row.cash_on_delivery_enabled !== false,
@@ -682,7 +684,10 @@ export function mapSettingsToDb(s: Partial<PlatformSettings>): any {
   if (s.sellerCommissionPercent !== undefined) data.seller_commission_percent = s.sellerCommissionPercent;
   if (s.platformFee !== undefined) data.platform_fee = s.platformFee;
   if (s.deliveryBaseCharge !== undefined) data.delivery_base_charge = s.deliveryBaseCharge;
-  if (s.deliveryPartnerEarningPerOrder !== undefined) data.delivery_partner_earning_per_order = s.deliveryPartnerEarningPerOrder;
+  const comm = s.deliveryPartnerCommissionPercent !== undefined ? s.deliveryPartnerCommissionPercent : s.deliveryPartnerEarningPerOrder;
+  if (comm !== undefined) {
+    data.delivery_partner_earning_per_order = comm;
+  }
   if (s.minPayoutAmount !== undefined) data.min_payout_amount = s.minPayoutAmount;
   if (s.autoApproveProducts !== undefined) data.auto_approve_products = s.autoApproveProducts;
   if (s.cashOnDeliveryEnabled !== undefined) data.cash_on_delivery_enabled = s.cashOnDeliveryEnabled;
@@ -697,7 +702,8 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
   sellerCommissionPercent: 5,
   platformFee: 5,
   deliveryBaseCharge: 40,
-  deliveryPartnerEarningPerOrder: 35,
+  deliveryPartnerCommissionPercent: 5,
+  deliveryPartnerEarningPerOrder: 5,
   minPayoutAmount: 100,
   autoApproveProducts: true,
   cashOnDeliveryEnabled: true,
@@ -3448,6 +3454,11 @@ export async function createOrder(
       }
     } catch {}
 
+    // Calculate dynamic rider earning: 95% of customer delivery charge (5% platform fee deducted)
+    const commPct = settings.deliveryPartnerCommissionPercent ?? 5;
+    const riderShareRatio = (100 - commPct) / 100;
+    const riderEarningAmount = Math.round(deliveryCharge * riderShareRatio * 100) / 100;
+
     // Create delivery assignment
     const assignmentId = `asgn_${orderId}_${shopId}`;
     const assignment: DeliveryAssignment = {
@@ -3462,7 +3473,7 @@ export async function createOrder(
       customerPhone,
       deliveryAddress,
       deliveryFee: deliveryCharge,
-      earningAmount: deliveryCharge,
+      earningAmount: riderEarningAmount,
       status: 'available',
       otp,
       createdAt: new Date().toISOString(),
@@ -3506,11 +3517,14 @@ export async function createOrder(
     });
   }
 
-  // Notify available delivery partners
+  // Notify available delivery partners with exact 95% delivery charge earning
+  const activeCommPct = settings.deliveryPartnerCommissionPercent ?? 5;
+  const riderShare = (100 - activeCommPct) / 100;
+  const broadcastEarning = Math.round(deliveryCharge * riderShare * 100) / 100;
   await createNotification({
     recipientRole: 'delivery_partner',
     title: '📦 New Delivery Available!',
-    message: `A new local delivery order #${orderId} is ready in your zone (Earn ₹${settings.deliveryPartnerEarningPerOrder}).`,
+    message: `A new local delivery order #${orderId} is ready in your zone (Earn ₹${broadcastEarning} - 95% of ₹${deliveryCharge} delivery fee).`,
     type: 'delivery',
     referenceId: orderId,
   });
@@ -3637,12 +3651,21 @@ export async function verifyOrderPayment(orderId: string) {
       .eq('order_id', orderId);
 
     const dynamicCharge = orderData?.delivery_charge || 20;
+    let commPct = 5;
+    try {
+      const { data: stRow } = await supabase.from('platform_settings').select('*').limit(1).maybeSingle();
+      if (stRow) {
+        commPct = Number(stRow.delivery_partner_commission_percent ?? stRow.delivery_partner_earning_per_order) || 5;
+      }
+    } catch {}
+    const riderShareRatio = (100 - commPct) / 100;
+    const dynamicRiderEarning = Math.round(dynamicCharge * riderShareRatio * 100) / 100;
 
     if (existingAssignments && existingAssignments.length > 0) {
       await supabase.from('delivery_assignments').update({
         status: 'available',
         delivery_fee: dynamicCharge,
-        earning_amount: dynamicCharge,
+        earning_amount: dynamicRiderEarning,
         updated_at: now,
       }).eq('order_id', orderId);
     } else if (orderData) {
@@ -3662,7 +3685,7 @@ export async function verifyOrderPayment(orderId: string) {
         customer_phone: orderData.customer_phone || '',
         delivery_address: orderData.delivery_address || {},
         delivery_fee: dynamicCharge,
-        earning_amount: dynamicCharge,
+        earning_amount: dynamicRiderEarning,
         status: 'available',
         otp: orderData.delivery_otp || '8228',
         created_at: now,
@@ -3781,14 +3804,23 @@ export async function fetchPartnerDeliveriesFromSupabase(partnerId?: string): Pr
         } catch {}
       }
 
+      let commPct = 5;
+      try {
+        const { data: stRow } = await supabase.from('platform_settings').select('*').limit(1).maybeSingle();
+        if (stRow) {
+          commPct = Number(stRow.delivery_partner_commission_percent ?? stRow.delivery_partner_earning_per_order) || 5;
+        }
+      } catch {}
+      const riderShare = (100 - commPct) / 100;
+
       return data.map((row: any) => {
         const asgn = mapAssignmentFromDb(row);
-        const dynamicFee = orderChargeMap[asgn.orderId];
+        const dynamicFee = orderChargeMap[asgn.orderId] ?? asgn.deliveryFee;
         if (dynamicFee !== undefined && dynamicFee > 0) {
-          asgn.earningAmount = dynamicFee;
           asgn.deliveryFee = dynamicFee;
+          asgn.earningAmount = Math.round(dynamicFee * riderShare * 100) / 100;
         } else if (asgn.earningAmount === 0 && asgn.deliveryFee > 0) {
-          asgn.earningAmount = asgn.deliveryFee;
+          asgn.earningAmount = Math.round(asgn.deliveryFee * riderShare * 100) / 100;
         }
         return asgn;
       });
@@ -4010,8 +4042,8 @@ export async function completeDeliveryWithOtp(assignmentId: string, enteredOtp: 
     } catch {}
   }
 
-  // 3. Credit rider wallet with EXACT dynamic delivery charge from orders table
-  let finalRiderEarning = assignment.earningAmount;
+  // 3. Credit rider wallet with EXACT customer delivery charge minus 5% platform commission (95% to rider)
+  let actualDeliveryCharge = assignment.deliveryFee || assignment.earningAmount || 40;
   try {
     const { data: ord } = await supabase
       .from('orders')
@@ -4019,17 +4051,43 @@ export async function completeDeliveryWithOtp(assignmentId: string, enteredOtp: 
       .eq('id', assignment.orderId)
       .single();
     if (ord && typeof ord.delivery_charge === 'number' && ord.delivery_charge > 0) {
-      finalRiderEarning = ord.delivery_charge;
+      actualDeliveryCharge = ord.delivery_charge;
     }
   } catch {}
 
+  let commissionPercent = 5;
+  try {
+    const settings = await getPlatformSettings();
+    if (settings && typeof settings.deliveryPartnerCommissionPercent === 'number') {
+      commissionPercent = settings.deliveryPartnerCommissionPercent;
+    }
+  } catch {}
+
+  const riderShare = (100 - commissionPercent) / 100;
+  const finalRiderEarning = Math.round(actualDeliveryCharge * riderShare * 100) / 100;
+  const platformCommissionDeducted = Math.round((actualDeliveryCharge - finalRiderEarning) * 100) / 100;
+
+  // Persist actual calculated rider earning & delivery fee into delivery_assignments
+  try {
+    await supabase
+      .from('delivery_assignments')
+      .update({
+        earning_amount: finalRiderEarning,
+        delivery_fee: actualDeliveryCharge,
+        updated_at: now,
+      })
+      .eq('id', assignmentId);
+  } catch {}
+
   if (assignment.deliveryPartnerId && finalRiderEarning > 0) {
+    const txDescription = `Delivery earning for Order #${assignment.orderId} (₹${actualDeliveryCharge} delivery charge - ${commissionPercent}% platform commission ₹${platformCommissionDeducted})`;
+
     await addWalletTransaction(
       assignment.deliveryPartnerId,
       'delivery_partner',
       'credit',
       finalRiderEarning,
-      `Delivery earning for Order #${assignment.orderId} (₹${finalRiderEarning})`,
+      txDescription,
       assignment.id,
       assignment.orderId
     );
@@ -4051,7 +4109,7 @@ export async function completeDeliveryWithOtp(assignmentId: string, enteredOtp: 
           'delivery_partner',
           'credit',
           finalRiderEarning,
-          `Delivery earning for Order #${assignment.orderId} (₹${finalRiderEarning})`,
+          txDescription,
           assignment.id,
           assignment.orderId
         );

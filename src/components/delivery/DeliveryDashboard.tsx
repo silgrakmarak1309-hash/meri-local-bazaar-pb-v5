@@ -212,7 +212,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
         </div>
         <h2 className="text-xl font-black text-slate-900">Become a Balpakram online store Delivery Partner</h2>
         <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto">
-          Deliver local customer packages, earn on every order with real-time OTP validation, and withdraw earnings daily via UPI.
+          Deliver local customer packages, earn 95% of customer delivery fee on every order (5% platform fee deducted), and withdraw earnings daily via UPI.
         </p>
         <button
           onClick={onOpenRegistration}
@@ -487,7 +487,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                 Awaiting Acceptance / Pending Pickup ({availableAssignments.length})
               </h2>
               <span className="text-xs text-slate-500 font-medium">
-                Earning: Based on distance/village (Dynamic per order) • Deliver with 4-digit Customer OTP
+                Earning: 95% of Customer Delivery Charge (5% platform fee deducted) • Deliver with 4-digit Customer OTP
               </span>
             </div>
             <button
@@ -528,7 +528,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                       </span>
                     </div>
                     <span className="text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 shrink-0">
-                      Earn ₹{assign.earningAmount || assign.deliveryFee || 20}
+                      Earn ₹{assign.earningAmount || Math.round((assign.deliveryFee || 20) * 0.95)} (95%)
                     </span>
                   </div>
 
@@ -607,9 +607,9 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                     </div>
 
                     <div className="text-right">
-                      <div className="text-xs text-slate-500 font-medium">Dynamic Payout</div>
-                      <div className="text-base font-black text-emerald-700">₹{task.earningAmount || task.deliveryFee || 20}</div>
-                      <span className="text-[10px] text-slate-400 block font-medium">Auto-credited on OTP verify</span>
+                      <div className="text-xs text-slate-500 font-medium">Net Rider Earning (95%)</div>
+                      <div className="text-base font-black text-emerald-700">₹{task.earningAmount || Math.round((task.deliveryFee || 20) * 0.95)}</div>
+                      <span className="text-[10px] text-slate-400 block font-medium">₹{task.deliveryFee || 20} fee (5% platform fee deducted)</span>
                     </div>
                   </div>
 
@@ -896,7 +896,7 @@ export const DeliveryDashboard: React.FC<DeliveryDashboardProps> = ({
                   </div>
 
                   <div className="text-right">
-                    <span className="text-sm font-black text-emerald-700">+₹{task.earningAmount || task.deliveryFee || 20}</span>
+                    <span className="text-sm font-black text-emerald-700">+₹{task.earningAmount || Math.round((task.deliveryFee || 20) * 0.95)}</span>
                     <span className="text-[10px] text-slate-400 block">Credited to Wallet</span>
                   </div>
                 </div>

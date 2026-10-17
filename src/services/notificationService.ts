@@ -442,7 +442,8 @@ export function setupDeliveryPartnerRealtime(
     // 1. Play audible dispatch siren
     playDeliveryAlertSound();
 
-    const earning = asgnData.earning_amount || asgnData.earningAmount || 35;
+    const fee = Number(asgnData.delivery_fee || asgnData.deliveryFee) || 40;
+    const earning = asgnData.earning_amount || asgnData.earningAmount || Math.round(fee * 0.95);
     const shopName = asgnData.shop_name || asgnData.shopName || 'Local Shop';
     const pickupLoc = asgnData.shop_address || asgnData.shopAddress || 'Local Market';
 

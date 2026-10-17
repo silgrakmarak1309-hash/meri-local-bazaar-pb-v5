@@ -322,10 +322,12 @@ export interface PlatformSettings {
   sellerCommissionPercent: number; // e.g. 5%
   platformFee: number; // e.g. ₹5
   deliveryBaseCharge: number; // e.g. ₹40
-  deliveryPartnerEarningPerOrder: number; // e.g. ₹35
+  deliveryPartnerCommissionPercent: number; // Delivery Partner Commission Deducted by Platform (%), Default: 5%
+  deliveryPartnerEarningPerOrder?: number; // legacy alias
   minPayoutAmount: number; // e.g. ₹100
   autoApproveProducts: boolean;
   cashOnDeliveryEnabled: boolean;
   localPinCodeRestriction: boolean; // Strict local buyer-to-local-seller PIN matching (Default: true)
   updatedAt: string;
 }
+
