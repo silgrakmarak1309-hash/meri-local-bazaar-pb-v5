@@ -10,7 +10,8 @@ import {
   where,
   onSnapshot,
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
 import {
   Product,
   Category,
@@ -1817,6 +1818,185 @@ export async function registerDeliveryPartner(partnerData: Omit<DeliveryPartner,
     recipientRole: 'admin',
     title: 'New Delivery Partner Onboarding',
     message: `${partner.fullName} (${partner.vehicleType} - ${partner.vehicleNumber}) has applied to become a delivery partner.`,
+    type: 'approval',
+    referenceId: partner.id,
+  });
+
+  return partner;
+}
+
+export async function adminRegisterDeliveryPartner(params: {
+  fullName: string;
+  phoneNumber: string;
+  email: string;
+  password?: string;
+  pinCode: string;
+  serviceArea?: string;
+  vehicleType: 'Bike' | 'Scooter' | 'Bicycle' | 'Electric Vehicle' | 'Other';
+  vehicleNumber: string;
+  drivingLicenceNumber: string;
+  idProofNumber?: string;
+  bankDetails: {
+    accountHolderName: string;
+    accountNumber: string;
+    ifsc: string;
+    upiId: string;
+  };
+  status?: DeliveryPartner['status'];
+}): Promise<DeliveryPartner> {
+  const cleanEmail = (params.email || '').toLowerCase().trim();
+
+  // 1. Strict Duplicate Check: ensure no duplicate delivery profile for this email
+  const existingPartner = await getDeliveryPartnerByIdOrEmail('', cleanEmail);
+  if (existingPartner) {
+    throw new Error(
+      `A delivery partner profile is already registered for "${cleanEmail}" (${existingPartner.fullName}). Each Gmail ID is permitted only one delivery partner profile.`
+    );
+  }
+
+  // 2. Create User Account in Supabase Auth & Users table with role: 'delivery_partner'
+  let resolvedUid = '';
+
+  if (params.password && params.password.trim()) {
+    try {
+      const { data: suAuthData, error: suAuthError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password: params.password.trim(),
+        options: {
+          data: {
+            display_name: params.fullName.trim(),
+            role: 'delivery_partner',
+            phone_number: params.phoneNumber.trim(),
+          },
+        },
+      });
+      if (suAuthData?.user?.id) {
+        resolvedUid = suAuthData.user.id;
+      }
+      if (suAuthError) {
+        console.warn('Supabase auth signup notice for rider:', suAuthError.message);
+      }
+    } catch (suErr) {
+      console.warn('Supabase auth signup exception for rider:', suErr);
+    }
+
+    // Mirror to Firebase Auth as seamless fallback
+    try {
+      await createUserWithEmailAndPassword(auth, cleanEmail, params.password.trim());
+    } catch (fbErr: any) {
+      console.warn('Firebase auth rider creation notice:', fbErr?.message || fbErr);
+    }
+  }
+
+  // Fallback UID resolution from users table or deterministic ID
+  if (!resolvedUid) {
+    try {
+      const { data: uData } = await supabase
+        .from('users')
+        .select('id, uid')
+        .ilike('email', cleanEmail)
+        .limit(1)
+        .maybeSingle();
+      if (uData) {
+        resolvedUid = uData.uid || uData.id;
+      }
+    } catch {}
+  }
+
+  if (!resolvedUid) {
+    resolvedUid = `rider_${Date.now()}`;
+  }
+
+  // 3. Insert or update into Supabase public.users table with role: 'delivery_partner'
+  try {
+    await supabase.from('users').upsert(
+      {
+        uid: resolvedUid,
+        email: cleanEmail,
+        display_name: params.fullName.trim(),
+        role: 'delivery_partner',
+        phone_number: params.phoneNumber.trim(),
+        delivery_pin_code: params.pinCode.trim(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'email' }
+    );
+  } catch (uErr) {
+    console.warn('Supabase users table rider upsert notice:', uErr);
+  }
+
+  // Also mirror user profile in Firestore
+  try {
+    await setDoc(
+      doc(db, 'users', resolvedUid),
+      {
+        uid: resolvedUid,
+        email: cleanEmail,
+        displayName: params.fullName.trim(),
+        role: 'delivery_partner',
+        phoneNumber: params.phoneNumber.trim(),
+        deliveryPinCode: params.pinCode.trim(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch {}
+
+  // 4. Create Delivery Partner entity
+  const partner: DeliveryPartner = {
+    id: resolvedUid,
+    fullName: params.fullName.trim(),
+    email: cleanEmail,
+    phoneNumber: params.phoneNumber.trim(),
+    photoURL: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80',
+    dateOfBirth: '1998-01-01',
+    address: params.serviceArea?.trim() || params.pinCode.trim(),
+    serviceArea: params.serviceArea?.trim() || params.pinCode.trim(),
+    vehicleType: params.vehicleType || 'Bike',
+    vehicleNumber: params.vehicleNumber.trim().toUpperCase(),
+    drivingLicenceNumber: params.drivingLicenceNumber.trim().toUpperCase(),
+    idProofNumber: params.idProofNumber?.trim() || `DL-${params.drivingLicenceNumber.trim().toUpperCase()}`,
+    bankDetails: {
+      accountHolderName: params.bankDetails.accountHolderName.trim() || params.fullName.trim(),
+      accountNumber: params.bankDetails.accountNumber.trim(),
+      ifsc: params.bankDetails.ifsc.trim().toUpperCase(),
+      upiId: params.bankDetails.upiId.trim(),
+    },
+    status: params.status || 'approved',
+    isOnline: true,
+    totalDeliveries: 0,
+    rating: 5.0,
+    createdAt: new Date().toISOString(),
+  };
+
+  // 5. Insert into Supabase delivery_partners table
+  try {
+    const { error: pErr } = await supabase.from('delivery_partners').upsert(mapDeliveryPartnerToDb(partner));
+    if (pErr) {
+      console.warn('Supabase delivery_partners upsert warning:', pErr.message);
+    }
+  } catch (e) {
+    console.warn('Supabase rider admin insert error:', e);
+  }
+
+  // 6. Mirror to Firestore delivery_partners collection
+  try {
+    await setDoc(doc(db, 'delivery_partners', partner.id), partner);
+  } catch {}
+
+  // 7. Auto-initialize wallet in Supabase public.wallets table with role: 'delivery_partner'
+  try {
+    await ensureWalletExists(resolvedUid, 'delivery_partner', 0);
+  } catch (wErr) {
+    console.warn('Wallet auto-creation notice for rider:', wErr);
+  }
+
+  // 8. Admin alert notification
+  await createNotification({
+    recipientRole: 'admin',
+    title: 'New Delivery Partner Registered',
+    message: `${partner.fullName} (${partner.vehicleType} - ${partner.vehicleNumber}) has been registered and approved by Admin.`,
     type: 'approval',
     referenceId: partner.id,
   });

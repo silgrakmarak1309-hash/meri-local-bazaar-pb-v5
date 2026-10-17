@@ -83,6 +83,7 @@ import {
 import { supabase, checkSupabaseConnection } from '../../supabase';
 import { VillageDeliveryRatesManager } from './VillageDeliveryRatesManager';
 import { AdminRegisterShopModal } from './AdminRegisterShopModal';
+import { AdminRegisterDeliveryPartnerModal } from './AdminRegisterDeliveryPartnerModal';
 
 interface PartnerHubProps {
   settings: PlatformSettings;
@@ -106,6 +107,7 @@ export const AdminDashboard: React.FC<PartnerHubProps> = ({
   // Navigation
   const [activeTab, setActiveTab] = useState(activeSubTab || 'dashboard');
   const [isRegisterShopModalOpen, setIsRegisterShopModalOpen] = useState(false);
+  const [isRegisterPartnerModalOpen, setIsRegisterPartnerModalOpen] = useState(false);
 
   // Real-time datasets
   const [shops, setShops] = useState<Shop[]>([]);
@@ -1609,10 +1611,23 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
       {/* ========================================================== */}
       {activeTab === 'delivery_partners' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-extrabold text-slate-900">
-              Delivery Partners Fleet ({partners.length})
-            </h2>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+            <div>
+              <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <Bike className="w-5 h-5 text-emerald-600" />
+                <span>Delivery Partners Fleet ({partners.length})</span>
+              </h2>
+              <p className="text-xs text-slate-500">
+                Directly register, verify and manage riders to fulfill doorstep order deliveries
+              </p>
+            </div>
+            <button
+              onClick={() => setIsRegisterPartnerModalOpen(true)}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-2 cursor-pointer w-fit"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Register New Delivery Partner</span>
+            </button>
           </div>
           <div className="grid grid-cols-1 gap-3">
             {partners.map((partner) => (
@@ -1697,12 +1712,30 @@ VALUES ('global', 5, 5, 40, 35, 100, true, true) ON CONFLICT (id) DO NOTHING;`);
               </div>
             ))}
             {partners.length === 0 && (
-              <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 text-xs">
-                No delivery partners registered yet.
+              <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-500 text-xs space-y-3">
+                <Bike className="w-10 h-10 text-slate-300 mx-auto" />
+                <p>No delivery partners registered yet.</p>
+                <button
+                  onClick={() => setIsRegisterPartnerModalOpen(true)}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition inline-flex items-center gap-2 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Register First Delivery Partner</span>
+                </button>
               </div>
             )}
           </div>
+
+          {/* Admin Register Delivery Partner Modal inside Partner Hub */}
+          <AdminRegisterDeliveryPartnerModal
+            isOpen={isRegisterPartnerModalOpen}
+            onClose={() => setIsRegisterPartnerModalOpen(false)}
+            onPartnerRegistered={(newPartner) => {
+              setPartners((prev) => [newPartner, ...prev.filter((p) => p.id !== newPartner.id)]);
+            }}
+          />
         </div>
+
       )}
 
       {/* ========================================================== */}
